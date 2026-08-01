@@ -1,0 +1,7 @@
+[alias]
+check-dev = "check"
+run-dev = "run"
+
+[target.x86_64-pc-windows-msvc]
+# Use Rust's bundled linker for faster debug iteration on Windows.
+linker = "rust-lld.exe"
