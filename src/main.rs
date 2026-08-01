@@ -363,8 +363,8 @@ fn player_movement(
 }
 
 fn update_player_aim(
-    enemies: Query<&Transform, With<Enemy>>,
-    mut player: Query<&mut Transform, With<Player>>,
+    enemies: Query<&Transform, (With<Enemy>, Without<Player>)>,
+    mut player: Query<&mut Transform, (With<Player>, Without<Enemy>)>,
 ) {
     let Ok(mut player_transform) = player.single_mut() else {
         return;
@@ -511,8 +511,8 @@ fn fire_weapon(
 fn move_enemies(
     time: Res<Time>,
     mut game_state: ResMut<GameState>,
-    player: Query<&Transform, With<Player>>,
-    mut enemies: Query<(Entity, &mut Transform, &Enemy)>,
+    player: Query<&Transform, (With<Player>, Without<Enemy>)>,
+    mut enemies: Query<(Entity, &mut Transform, &Enemy), (With<Enemy>, Without<Player>)>,
     mut commands: Commands,
 ) {
     if game_state.game_over {
@@ -541,8 +541,14 @@ fn move_enemies(
 
 fn move_projectiles_and_resolve_hits(
     time: Res<Time>,
-    mut projectiles: Query<(Entity, &mut Transform, &Projectile)>,
-    mut enemies: Query<(Entity, &mut Enemy, &mut Sprite, &Transform)>,
+    mut projectiles: Query<
+        (Entity, &mut Transform, &Projectile),
+        (With<Projectile>, Without<Enemy>),
+    >,
+    mut enemies: Query<
+        (Entity, &mut Enemy, &mut Sprite, &Transform),
+        (With<Enemy>, Without<Projectile>),
+    >,
     mut game_state: ResMut<GameState>,
     mut commands: Commands,
 ) {
@@ -622,10 +628,13 @@ fn update_hud(
     state: Res<GameState>,
     wave: Res<WaveState>,
     enemies: Query<(), With<Enemy>>,
-    mut stats: Query<&mut Text, With<HudStats>>,
-    mut wave_text: Query<&mut Text, With<HudWave>>,
+    mut stats: Query<&mut Text, (With<HudStats>, Without<HudWave>, Without<GameOverLabel>)>,
+    mut wave_text: Query<&mut Text, (With<HudWave>, Without<HudStats>, Without<GameOverLabel>)>,
     mut health_bar: Query<&mut Node, With<HealthBarFill>>,
-    mut game_over: Query<(&mut Visibility, &mut Text), With<GameOverLabel>>,
+    mut game_over: Query<
+        (&mut Visibility, &mut Text),
+        (With<GameOverLabel>, Without<HudStats>, Without<HudWave>),
+    >,
 ) {
     if let Ok(mut text) = stats.single_mut() {
         text.0 = format!("SCORE  {:06}\nKILLS  {:03}", state.score, state.kills);
