@@ -1,373 +1,467 @@
-use astra_voxel_world::prelude::*;
+use bevy::app::AppExit;
 use bevy::prelude::*;
-use crate::config::*;
-use crate::state::*;
-use crate::world::*;
+use bevy::window::WindowFocused;
 
-pub fn spawn_generation_dialog_button(
-    parent: &mut ChildSpawnerCommands,
-    action: VoxelGenerationDialogAction,
-    label: &'static str,
-    font: Handle<Font>,
-) {
-    parent
-        .spawn((
-            Button,
-            Node {
-                min_width: Val::Px(104.0),
-                height: Val::Px(32.0),
-                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                border_radius: BorderRadius::all(Val::Px(4.0)),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.08, 0.18, 0.22, 0.92)),
-            BorderColor::all(Color::srgba(0.36, 0.62, 0.70, 0.60)),
-            VoxelGenerationDialogButton { action },
-        ))
-        .with_children(|button| {
-            button.spawn((
-                Text::new(label),
-                TextFont {
-                    font,
-                    font_size: 13.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.84, 0.96, 0.98)),
-            ));
-        });
+use crate::gameplay::RunLifecycle;
+use crate::state::*;
+
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayAction {
+    Resume,
+    Restart,
+    MainMenu,
+    Quit,
+    ChooseEvacuate,
+    ChooseStabilize,
+    ToggleMotion,
+    VolumeDown,
+    VolumeUp,
 }
 
-pub fn spawn_generation_dialog(commands: &mut Commands, font: Handle<Font>) {
+#[derive(Component)]
+pub struct SettingsSummary;
+
+pub fn setup_hud(mut commands: Commands, font: Res<ArabicFont>) {
     commands
         .spawn((
-            Name::new("Voxel Generation Input Dialog"),
             Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(0.0),
-                left: Val::Px(0.0),
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.46)),
-            ZIndex(30),
             Visibility::Hidden,
-            VoxelGenerationDialogRoot,
+            Pickable::IGNORE,
+            ZIndex(40),
+            HudRoot,
         ))
         .with_children(|root| {
             root.spawn((
                 Node {
-                    width: Val::Px(880.0),
-                    max_width: Val::Percent(92.0),
-                    padding: UiRect::all(Val::Px(16.0)),
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(18.0),
+                    left: Val::Percent(50.0),
+                    width: Val::Px(460.0),
+                    max_width: Val::Percent(48.0),
+                    height: Val::Px(68.0),
+                    margin: UiRect::left(Val::Px(-230.0)),
+                    padding: UiRect::all(Val::Px(10.0)),
                     border: UiRect::all(Val::Px(1.0)),
-                    border_radius: BorderRadius::all(Val::Px(7.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
                     flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(10.0),
+                    row_gap: Val::Px(6.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.018, 0.030, 0.038, 0.96)),
-                BorderColor::all(Color::srgba(0.36, 0.62, 0.70, 0.62)),
+                BackgroundColor(Color::srgba(0.015, 0.04, 0.055, 0.88)),
+                BorderColor::all(Color::srgba(0.52, 0.96, 0.86, 0.62)),
             ))
             .with_children(|panel| {
                 panel.spawn((
-                    Text::new("إعدادات العالم الفوكسلي"),
+                    Text::new("استقرار العالم"),
                     TextFont {
-                        font: font.clone(),
-                        font_size: 18.0,
+                        font: font.0.clone(),
+                        font_size: 15.0,
                         ..default()
                     },
-                    TextColor(Color::srgb(0.88, 0.98, 1.0)),
-                ));
-                panel.spawn((
-                    Text::new(
-                        "قم بتعديل قيم التوليد البرمجي ثم اضغط تطبيق (Apply). اضغط Esc للإلغاء.",
-                    ),
-                    TextFont {
-                        font: font.clone(),
-                        font_size: 13.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.66, 0.78, 0.82)),
+                    TextColor(Color::srgb(0.86, 0.96, 0.94)),
+                    RiskText,
                 ));
                 panel
                     .spawn((
                         Node {
                             width: Val::Percent(100.0),
-                            min_height: Val::Px(440.0),
-                            max_height: Val::Px(440.0),
-                            padding: UiRect::all(Val::Px(12.0)),
-                            border: UiRect::all(Val::Px(1.0)),
-                            border_radius: BorderRadius::all(Val::Px(5.0)),
+                            height: Val::Px(15.0),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
+                            overflow: Overflow::clip(),
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.004, 0.010, 0.014, 0.96)),
-                        BorderColor::all(Color::srgba(0.20, 0.44, 0.52, 0.62)),
+                        BackgroundColor(Color::srgba(0.02, 0.08, 0.10, 0.96)),
                     ))
-                    .with_children(|input| {
-                        input.spawn((
-                            Text::new(""),
-                            TextFont {
-                                font: font.clone(),
-                                font_size: 12.0,
+                    .with_children(|bar| {
+                        bar.spawn((
+                            Node {
+                                width: Val::Percent(10.0),
+                                height: Val::Percent(100.0),
+                                border_radius: BorderRadius::all(Val::Px(8.0)),
                                 ..default()
                             },
-                            TextColor(Color::srgb(0.88, 0.92, 0.86)),
-                            VoxelGenerationDialogInputText,
+                            BackgroundColor(Color::srgb(0.22, 0.88, 0.70)),
+                            RiskFill,
                         ));
                     });
-                panel.spawn((
-                    Text::new(""),
-                    TextFont {
-                        font: font.clone(),
-                        font_size: 13.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.78, 0.88, 0.86)),
-                    VoxelGenerationDialogStatusText,
-                ));
-                panel
-                    .spawn((Node {
-                        column_gap: Val::Px(8.0),
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },))
-                    .with_children(|row| {
-                        spawn_generation_dialog_button(
-                            row,
-                            VoxelGenerationDialogAction::Apply,
-                            "تطبيق (APPLY)",
-                            font.clone(),
-                        );
-                        spawn_generation_dialog_button(
-                            row,
-                            VoxelGenerationDialogAction::Cancel,
-                            "إلغاء (CANCEL)",
-                            font.clone(),
-                        );
-                    });
             });
+
+            root.spawn((
+                Text::new(""),
+                TextFont {
+                    font: font.0.clone(),
+                    font_size: 20.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.94, 0.98, 0.96)),
+                TextLayout::new_with_justify(Justify::Right),
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(24.0),
+                    right: Val::Px(24.0),
+                    width: Val::Px(340.0),
+                    max_width: Val::Percent(34.0),
+                    padding: UiRect::all(Val::Px(12.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.015, 0.04, 0.055, 0.78)),
+                ObjectiveText,
+            ));
+
+            root.spawn((
+                Text::new(""),
+                TextFont {
+                    font: font.0.clone(),
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.82, 0.94, 0.92)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(24.0),
+                    bottom: Val::Px(22.0),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.015, 0.04, 0.055, 0.78)),
+                InventoryText,
+            ));
+
+            root.spawn((
+                Text::new(""),
+                TextFont {
+                    font: font.0.clone(),
+                    font_size: 24.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.82, 0.38)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    bottom: Val::Px(24.0),
+                    margin: UiRect::left(Val::Px(-80.0)),
+                    ..default()
+                },
+                TimerText,
+            ));
         });
 }
 
-pub fn handle_generation_dialog_buttons(
-    mut dialog: ResMut<VoxelGenerationDialogState>,
-    mut world: ResMut<VoxelViewerWorld>,
-    mut controls: ResMut<VoxelViewerLiveControls>,
-    mut loaded: ResMut<LoadedVoxelChunks>,
-    mut commands: Commands,
-    changed_buttons: Query<(&Interaction, &VoxelGenerationDialogButton), Changed<Interaction>>,
+pub fn update_hud(
+    state: Res<State<AppState>>,
+    session: Res<GameSession>,
+    mut hud: Query<&mut Visibility, With<HudRoot>>,
+    mut risk_fill: Query<(&mut Node, &mut BackgroundColor), With<RiskFill>>,
+    mut risk_text: Query<&mut Text, (With<RiskText>, Without<ObjectiveText>, Without<InventoryText>, Without<TimerText>)>,
+    mut objective: Query<&mut Text, (With<ObjectiveText>, Without<RiskText>, Without<InventoryText>, Without<TimerText>)>,
+    mut inventory: Query<&mut Text, (With<InventoryText>, Without<RiskText>, Without<ObjectiveText>, Without<TimerText>)>,
+    mut timer: Query<&mut Text, (With<TimerText>, Without<RiskText>, Without<ObjectiveText>, Without<InventoryText>)>,
 ) {
-    for (interaction, button) in &changed_buttons {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
-
-        match button.action {
-            VoxelGenerationDialogAction::Open => {
-                dialog.open = true;
-                dialog.buffer = generation_arguments_text(world.settings, world.load_radius);
-                dialog.status =
-                    "اكتب القيم البرمجية ثم انقر فوق تطبيق.".to_string();
-            }
-            VoxelGenerationDialogAction::Apply => {
-                apply_generation_dialog_buffer(
-                    &mut dialog,
-                    &mut world,
-                    &mut controls,
-                    &mut loaded,
-                    &mut commands,
-                );
-            }
-            VoxelGenerationDialogAction::Cancel => {
-                dialog.open = false;
-                dialog.status = "تم إلغاء النافذة.".to_string();
-            }
-        }
-    }
-}
-
-pub fn handle_generation_dialog_keyboard_input(
-    mut keyboard_input: MessageReader<bevy::input::keyboard::KeyboardInput>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut dialog: ResMut<VoxelGenerationDialogState>,
-    mut world: ResMut<VoxelViewerWorld>,
-    mut controls: ResMut<VoxelViewerLiveControls>,
-    mut loaded: ResMut<LoadedVoxelChunks>,
-    mut commands: Commands,
-) {
-    if !dialog.open {
-        keyboard_input.clear();
-        return;
-    }
-
-    for event in keyboard_input.read() {
-        if event.state != bevy::input::ButtonState::Pressed {
-            continue;
-        }
-
-        match event.key_code {
-            KeyCode::Escape => {
-                dialog.open = false;
-                dialog.status = "تم إلغاء النافذة.".to_string();
-            }
-            KeyCode::Enter | KeyCode::NumpadEnter
-                if keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]) =>
-            {
-                apply_generation_dialog_buffer(
-                    &mut dialog,
-                    &mut world,
-                    &mut controls,
-                    &mut loaded,
-                    &mut commands,
-                );
-            }
-            KeyCode::Enter | KeyCode::NumpadEnter => {
-                dialog.buffer.push('\n');
-            }
-            KeyCode::Backspace => {
-                dialog.buffer.pop();
-            }
-            KeyCode::Tab => {
-                dialog.buffer.push(' ');
-            }
-            _ => {
-                if let Some(text) = event.text.as_ref() {
-                    for ch in text.chars().filter(|ch| !ch.is_control()) {
-                        dialog.buffer.push(ch);
-                    }
-                }
-            }
-        }
-
-        if dialog.buffer.len() > 4096 {
-            dialog.buffer.truncate(4096);
-        }
-    }
-}
-
-pub fn apply_generation_dialog_buffer(
-    dialog: &mut VoxelGenerationDialogState,
-    world: &mut VoxelViewerWorld,
-    controls: &mut VoxelViewerLiveControls,
-    loaded: &mut LoadedVoxelChunks,
-    commands: &mut Commands,
-) {
-    match parse_generation_arguments(&dialog.buffer, world.settings, world.load_radius) {
-        Ok(update) => {
-            world.settings = update.settings;
-            world.load_radius = update.load_radius;
-            *controls = VoxelViewerLiveControls::from_composition(world.settings.composition);
-            controls.last_change = "dialog apply".to_string();
-            reload_loaded_chunks(commands, loaded);
-            dialog.open = false;
-            dialog.status = "تم تطبيق إعدادات العالم بنجاح.".to_string();
-        }
-        Err(error) => {
-            dialog.status = format!("خطأ: {error}");
-        }
-    }
-}
-
-pub fn update_generation_dialog_ui(
-    dialog: Res<VoxelGenerationDialogState>,
-    mut roots: Query<&mut Visibility, With<VoxelGenerationDialogRoot>>,
-    mut dialog_text: ParamSet<(
-        Query<&mut Text, With<VoxelGenerationDialogInputText>>,
-        Query<&mut Text, With<VoxelGenerationDialogStatusText>>,
-    )>,
-    mut button_styles: Query<(
-        &Interaction,
-        &mut BackgroundColor,
-        &VoxelGenerationDialogButton,
-    )>,
-) {
-    if let Ok(mut visibility) = roots.single_mut() {
-        *visibility = if dialog.open {
+    if let Ok(mut visibility) = hud.single_mut() {
+        *visibility = if matches!(
+            state.get(),
+            AppState::Playing | AppState::Paused | AppState::Decision
+        ) {
             Visibility::Visible
         } else {
             Visibility::Hidden
         };
     }
-    if let Ok(mut text) = dialog_text.p0().single_mut() {
-        text.0 = if dialog.open {
-            format!("{}_", dialog.buffer)
-        } else {
-            String::new()
+    if let Ok((mut node, mut color)) = risk_fill.single_mut() {
+        node.width = Val::Percent(session.criticality);
+        color.0 = match session.risk_band() {
+            RiskBand::Calm => Color::srgb(0.20, 0.88, 0.68),
+            RiskBand::Warning => Color::srgb(1.0, 0.63, 0.18),
+            RiskBand::Critical => Color::srgb(0.92, 0.16, 0.24),
+            RiskBand::Terminal => Color::srgb(1.0, 0.03, 0.08),
         };
     }
-    if let Ok(mut text) = dialog_text.p1().single_mut() {
-        text.0 = dialog.status.clone();
+    if let Ok(mut text) = risk_text.single_mut() {
+        text.0 = format!("الخطر البنيوي: {:.0}%", session.criticality);
     }
-
-    for (interaction, mut background, button) in &mut button_styles {
-        let base = match button.action {
-            VoxelGenerationDialogAction::Open => Color::srgba(0.08, 0.18, 0.22, 0.92),
-            VoxelGenerationDialogAction::Apply => Color::srgba(0.09, 0.30, 0.24, 0.94),
-            VoxelGenerationDialogAction::Cancel => Color::srgba(0.22, 0.12, 0.11, 0.94),
-        };
-        let hover = match button.action {
-            VoxelGenerationDialogAction::Open => Color::srgba(0.12, 0.28, 0.34, 0.96),
-            VoxelGenerationDialogAction::Apply => Color::srgba(0.12, 0.42, 0.32, 0.96),
-            VoxelGenerationDialogAction::Cancel => Color::srgba(0.34, 0.16, 0.14, 0.96),
-        };
-        *background = match *interaction {
-            Interaction::Pressed => BackgroundColor(Color::srgba(0.18, 0.48, 0.52, 0.98)),
-            Interaction::Hovered => BackgroundColor(hover),
-            Interaction::None => BackgroundColor(base),
-        };
+    if let Ok(mut text) = objective.single_mut() {
+        text.0 = format!("الهدف\n{}", session.objective_hint);
+    }
+    if let Ok(mut text) = inventory.single_mut() {
+        text.0 = format!(
+            "الشظايا: {}/3   |   كتل الدعم: {}\nالفأرة اليسرى: حفر   |   اليمنى: دعم",
+            session.crystals, session.supports
+        );
+    }
+    if let Ok(mut text) = timer.single_mut() {
+        text.0 = session.phase_time_remaining.map_or_else(String::new, |remaining| {
+            let seconds = remaining.ceil() as u32;
+            format!("الوقت المتبقي  {:02}:{:02}", seconds / 60, seconds % 60)
+        });
     }
 }
 
-pub fn update_generation_hud(
-    world: Res<VoxelViewerWorld>,
-    controls: Res<VoxelViewerLiveControls>,
-    weather_state: Res<VoxelViewerWeatherState>,
-    loaded: Res<LoadedVoxelChunks>,
-    mut text: Query<&mut Text, With<VoxelViewerHudText>>,
+pub fn toggle_pause(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    state: Res<State<AppState>>,
+    mut next_state: ResMut<NextState<AppState>>,
 ) {
-    let Ok(mut text) = text.single_mut() else {
+    if !keyboard.just_pressed(KeyCode::Escape) {
         return;
-    };
-
-    text.0 = generation_hud_text(&world, &controls, &weather_state, loaded.chunks.len());
+    }
+    match state.get() {
+        AppState::Playing => next_state.set(AppState::Paused),
+        AppState::Paused => next_state.set(AppState::Playing),
+        _ => {}
+    }
 }
 
-pub fn generation_hud_text(
-    _world: &VoxelViewerWorld,
-    _controls: &VoxelViewerLiveControls,
-    weather_state: &VoxelViewerWeatherState,
-    active_chunks: usize,
-) -> String {
-    let local_biome = match weather_state.biome {
-        VoxelBiome::Plains => "المراعي الخضراء 🌿",
-        VoxelBiome::Forest => "الغابة السحرية 🌲",
-        VoxelBiome::Desert => "الصحراء الذهبية 🏜️",
-        VoxelBiome::Tundra => "السهول الثلجية ❄️",
-        VoxelBiome::Mountains => "الجبال المرتفعة 🏔️",
-        VoxelBiome::Wetlands => "المستنقعات 🌾",
-        VoxelBiome::Badlands => "الأراضي الصخرية 🏜️",
-        VoxelBiome::CraterField => "فوهة النيزك 🌌",
-        VoxelBiome::Volcanic => "الجبال البركانية 🌋",
-        VoxelBiome::CrystalFields => "أبراج البلور 💎",
-    };
-    let local_weather = match weather_state.weather {
-        VoxelWeather::Clear => "صافي ☀️",
-        VoxelWeather::Cloudy => "غائم ☁️",
-        VoxelWeather::Rain => "مطير 🌧️",
-        VoxelWeather::Storm => "عاصفة 🌩️",
-        VoxelWeather::Snow => "ثلجي ❄️",
-        VoxelWeather::DustStorm => "عاصفة رملية 🌪️",
-        VoxelWeather::Ashfall => "أمطار بركانية 🌋",
-        VoxelWeather::IonStorm => "عاصفة أيونية ⚡",
-    };
+pub fn pause_when_unfocused(
+    mut focused: MessageReader<WindowFocused>,
+    state: Res<State<AppState>>,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    for event in focused.read() {
+        if !event.focused && *state.get() == AppState::Playing {
+            next_state.set(AppState::Paused);
+        }
+    }
+}
 
+pub fn setup_pause_overlay(mut commands: Commands, font: Res<ArabicFont>, prefs: Res<GamePreferences>) {
+    commands
+        .spawn(screen_container(Color::srgba(0.01, 0.02, 0.035, 0.72)))
+        .insert((ScreenRoot, ZIndex(75)))
+        .with_children(|root| {
+            root.spawn(panel_node(480.0)).with_children(|panel| {
+                spawn_title(panel, &font.0, "توقف مؤقت", 38.0);
+                spawn_action_button(panel, &font.0, "متابعة", OverlayAction::Resume, true);
+                spawn_action_button(panel, &font.0, "إعادة المهمة", OverlayAction::Restart, false);
+                spawn_action_button(panel, &font.0, "القائمة الرئيسية", OverlayAction::MainMenu, false);
+                spawn_action_button(panel, &font.0, "خفض الصوت", OverlayAction::VolumeDown, false);
+                spawn_action_button(panel, &font.0, "رفع الصوت", OverlayAction::VolumeUp, false);
+                spawn_action_button(panel, &font.0, "تقليل الاهتزاز والوميض", OverlayAction::ToggleMotion, false);
+                panel.spawn((
+                    Text::new(settings_text(&prefs)),
+                    TextFont { font: font.0.clone(), font_size: 14.0, ..default() },
+                    TextColor(Color::srgb(0.68, 0.84, 0.82)),
+                    SettingsSummary,
+                ));
+                spawn_action_button(panel, &font.0, "خروج", OverlayAction::Quit, false);
+            });
+        });
+}
+
+pub fn setup_decision_overlay(mut commands: Commands, font: Res<ArabicFont>) {
+    commands
+        .spawn(screen_container(Color::srgba(0.10, 0.015, 0.035, 0.76)))
+        .insert((ScreenRoot, ZIndex(78)))
+        .with_children(|root| {
+            root.spawn(panel_node(760.0)).with_children(|panel| {
+                spawn_title(panel, &font.0, "بلغ العالم النقطة الحرجة", 38.0);
+                panel.spawn((
+                    Text::new("الشظايا الثلاث تكفي لمسار واحد فقط. لا رجعة بعد اختيارك."),
+                    TextFont { font: font.0.clone(), font_size: 19.0, ..default() },
+                    TextColor(Color::srgb(1.0, 0.84, 0.76)),
+                    TextLayout::new_with_justify(Justify::Center),
+                ));
+                spawn_action_button(panel, &font.0, "إخلاء المستعمرة — 90 ثانية، العالم سيُفقد", OverlayAction::ChooseEvacuate, true);
+                spawn_action_button(panel, &font.0, "تثبيت النواة — 120 ثانية، خطر مضاعف", OverlayAction::ChooseStabilize, false);
+            });
+        });
+}
+
+pub fn setup_ending_overlay(
+    mut commands: Commands,
+    font: Res<ArabicFont>,
+    session: Res<GameSession>,
+) {
+    let (title, body, color) = match session.outcome {
+        RunOutcome::PeopleSaved => (
+            "نجا الناس",
+            "أضاءت سفن الإخلاء السماء، بينما اختفى العالم خلفها.\nقرار آمن... لكنه لم يكن بلا ثمن.",
+            Color::srgb(0.32, 0.86, 1.0),
+        ),
+        RunOutcome::WorldSaved => (
+            "تغيّر المصير",
+            "ثبتت الشظايا قلب الصدع قبل اللحظة الأخيرة.\nنجا الناس والعالم لأنك خاطرت بكل شيء.",
+            Color::srgb(0.44, 1.0, 0.68),
+        ),
+        _ => (
+            "انهيار كامل",
+            "وصل الخطر إلى مئة بالمئة. ابتلع الصدع كل الاحتمالات.\nربما يكون القرار أسرع في المحاولة القادمة.",
+            Color::srgb(1.0, 0.24, 0.28),
+        ),
+    };
+    commands
+        .spawn(screen_container(Color::srgba(0.01, 0.02, 0.035, 0.82)))
+        .insert((ScreenRoot, ZIndex(82)))
+        .with_children(|root| {
+            root.spawn(panel_node(660.0)).with_children(|panel| {
+                panel.spawn((
+                    Text::new(title),
+                    TextFont { font: font.0.clone(), font_size: 46.0, ..default() },
+                    TextColor(color),
+                    TextLayout::new_with_justify(Justify::Center),
+                ));
+                panel.spawn((
+                    Text::new(body),
+                    TextFont { font: font.0.clone(), font_size: 20.0, ..default() },
+                    TextColor(Color::srgb(0.88, 0.94, 0.92)),
+                    TextLayout::new_with_justify(Justify::Center),
+                ));
+                panel.spawn((
+                    Text::new(format!("الوقت: {}:{:02}   |   الخطر النهائي: {:.0}%", (session.elapsed as u32) / 60, (session.elapsed as u32) % 60, session.criticality)),
+                    TextFont { font: font.0.clone(), font_size: 16.0, ..default() },
+                    TextColor(Color::srgb(0.70, 0.82, 0.82)),
+                ));
+                spawn_action_button(panel, &font.0, "إعادة اللعب", OverlayAction::Restart, true);
+                spawn_action_button(panel, &font.0, "القائمة الرئيسية", OverlayAction::MainMenu, false);
+                spawn_action_button(panel, &font.0, "خروج", OverlayAction::Quit, false);
+            });
+        });
+}
+
+pub fn handle_overlay_buttons(
+    mut buttons: Query<
+        (&Interaction, &OverlayAction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut session: ResMut<GameSession>,
+    balance: Res<BalanceConfig>,
+    mut prefs: ResMut<GamePreferences>,
+    mut lifecycle: ResMut<RunLifecycle>,
+    mut next_state: ResMut<NextState<AppState>>,
+    mut choices: MessageWriter<ChoiceCommitted>,
+    mut exit: MessageWriter<AppExit>,
+    mut settings: Query<&mut Text, With<SettingsSummary>>,
+) {
+    for (interaction, action, mut background) in &mut buttons {
+        match *interaction {
+            Interaction::Pressed => {
+                background.0 = Color::srgb(0.18, 0.82, 0.68);
+                match action {
+                    OverlayAction::Resume => next_state.set(AppState::Playing),
+                    OverlayAction::Restart => {
+                        lifecycle.active = false;
+                        next_state.set(AppState::Playing);
+                    }
+                    OverlayAction::MainMenu => {
+                        lifecycle.active = false;
+                        next_state.set(AppState::MainMenu);
+                    }
+                    OverlayAction::Quit => {
+                        exit.write(AppExit::Success);
+                    }
+                    OverlayAction::ChooseEvacuate => {
+                        session.choose(CriticalChoice::Evacuate);
+                        session.phase_time_remaining = Some(balance.evacuation_seconds);
+                        choices.write(ChoiceCommitted(CriticalChoice::Evacuate));
+                        next_state.set(AppState::Playing);
+                    }
+                    OverlayAction::ChooseStabilize => {
+                        session.choose(CriticalChoice::Stabilize);
+                        session.phase_time_remaining = Some(balance.stabilization_seconds);
+                        choices.write(ChoiceCommitted(CriticalChoice::Stabilize));
+                        next_state.set(AppState::Playing);
+                    }
+                    OverlayAction::ToggleMotion => prefs.reduced_motion = !prefs.reduced_motion,
+                    OverlayAction::VolumeDown => prefs.master_volume = (prefs.master_volume - 0.1).max(0.0),
+                    OverlayAction::VolumeUp => prefs.master_volume = (prefs.master_volume + 0.1).min(1.0),
+                }
+                if let Ok(mut text) = settings.single_mut() {
+                    text.0 = settings_text(&prefs);
+                }
+            }
+            Interaction::Hovered => background.0 = Color::srgba(0.14, 0.46, 0.42, 0.98),
+            Interaction::None => background.0 = Color::srgba(0.07, 0.20, 0.25, 0.96),
+        }
+    }
+}
+
+fn screen_container(color: Color) -> (Node, BackgroundColor) {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        BackgroundColor(color),
+    )
+}
+
+fn panel_node(width: f32) -> (Node, BackgroundColor, BorderColor) {
+    (
+        Node {
+            width: Val::Px(width),
+            max_width: Val::Percent(92.0),
+            padding: UiRect::all(Val::Px(28.0)),
+            border: UiRect::all(Val::Px(2.0)),
+            border_radius: BorderRadius::all(Val::Px(18.0)),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: Val::Px(14.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.025, 0.06, 0.08, 0.97)),
+        BorderColor::all(Color::srgba(0.42, 0.92, 0.82, 0.66)),
+    )
+}
+
+fn spawn_title(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, label: &'static str, size: f32) {
+    parent.spawn((
+        Text::new(label),
+        TextFont { font: font.clone(), font_size: size, ..default() },
+        TextColor(Color::srgb(0.68, 1.0, 0.92)),
+        TextLayout::new_with_justify(Justify::Center),
+    ));
+}
+
+fn spawn_action_button(
+    parent: &mut ChildSpawnerCommands,
+    font: &Handle<Font>,
+    label: &'static str,
+    action: OverlayAction,
+    primary: bool,
+) {
+    parent
+        .spawn((
+            Button,
+            Node {
+                width: Val::Percent(92.0),
+                min_height: Val::Px(48.0),
+                padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(11.0)),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(if primary {
+                Color::srgba(0.08, 0.62, 0.52, 0.97)
+            } else {
+                Color::srgba(0.07, 0.20, 0.25, 0.96)
+            }),
+            BorderColor::all(Color::srgba(0.42, 0.92, 0.82, 0.54)),
+            action,
+        ))
+        .with_children(|button| {
+            button.spawn((
+                Text::new(label),
+                TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                TextColor(Color::WHITE),
+                TextLayout::new_with_justify(Justify::Center),
+            ));
+        });
+}
+
+fn settings_text(prefs: &GamePreferences) -> String {
     format!(
-        "🌟 حديقة الفوكسل السحرية\nالبيئة الحالية: {local_biome}\nالطقس: {local_weather}\nالأجزاء المكتملة: {active_chunks}\n\n🎮 تعليمات التحكم:\nWASD / الأسهم: تحريك البطل\nزر الماوس الأيسر / F: حفر وتعدين الكتل ⛏️\nزر الماوس الأيمن / R: بناء كتل جديدة 🧱\nالأرقام 1 - 4: اختيار الكتل (1: تراب | 2: حجر | 3: بلور | 4: ذهب)",
+        "الصوت: {:.0}%   |   تقليل الحركة: {}",
+        prefs.master_volume * 100.0,
+        if prefs.reduced_motion { "مفعّل" } else { "متوقف" }
     )
 }

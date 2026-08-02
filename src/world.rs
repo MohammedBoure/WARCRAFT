@@ -1,37 +1,49 @@
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
+
 use astra_voxel_world::prelude::*;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 
-use crate::interaction::*;
-use crate::player::*;
+use crate::interaction::VoxelWorldEdits;
+use crate::player::PlayerTag;
 use crate::state::*;
-use crate::ui::*;
 
 pub fn setup_viewer_scene(
     world: Res<VoxelViewerWorld>,
     camera_state: Res<VoxelViewerCamera>,
-    asset_server: Res<AssetServer>,
     mut commands: Commands,
 ) {
-    let font_handle: Handle<Font> = asset_server.load("fonts/arabic.ttf");
+    let surface = sample_voxel_column(world.settings, 0, 0).height as f32 * HEIGHT_SCALE;
     let mut camera_transform = Transform::default();
-    apply_viewer_camera_transform(world.settings, &camera_state, &mut camera_transform, 75.0);
+    apply_viewer_camera_transform(&camera_state, &mut camera_transform, surface + 3.0);
 
     commands.spawn((
-        Name::new("Voxel Viewer Camera"),
+        Name::new("Critical Point Camera"),
         Camera3d::default(),
-        Camera::default(),
         Projection::Perspective(PerspectiveProjection {
-            fov: 42.0_f32.to_radians(),
+            fov: 48.0_f32.to_radians(),
             near: 0.1,
-            far: 20_000.0,
+            far: 6_000.0,
             ..default()
         }),
+        Bloom {
+            intensity: 0.18,
+            ..Bloom::NATURAL
+        },
+        DistanceFog {
+            color: Color::srgba(0.28, 0.58, 0.70, 1.0),
+            directional_light_color: Color::srgb(1.0, 0.82, 0.48),
+            directional_light_exponent: 18.0,
+            falloff: FogFalloff::Linear {
+                start: 180.0,
+                end: 620.0,
+            },
+        },
         AmbientLight {
-            color: Color::srgb(0.60, 0.68, 0.76),
-            brightness: 650.0,
+            color: Color::srgb(0.58, 0.72, 0.78),
+            brightness: 780.0,
             ..default()
         },
         camera_transform,
@@ -39,152 +51,64 @@ pub fn setup_viewer_scene(
     ));
 
     commands.spawn((
-        Name::new("Voxel Viewer Sun"),
+        Name::new("Critical Point Sun"),
         DirectionalLight {
-            color: Color::srgb(1.0, 0.94, 0.82),
-            illuminance: 24_000.0,
-            shadows_enabled: false,
+            color: Color::srgb(1.0, 0.88, 0.58),
+            illuminance: 28_000.0,
+            shadows_enabled: true,
             ..default()
         },
-        Transform::from_xyz(-280.0, 430.0, 180.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(-180.0, 320.0, 140.0).looking_at(Vec3::ZERO, Vec3::Y),
         VoxelViewerSunTag,
     ));
 
     commands.spawn((
-        Name::new("Voxel Viewer Weather Overlay"),
+        Name::new("Risk Color Overlay"),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(0.0),
-            left: Val::Px(0.0),
             width: Val::Percent(100.0),
             height: Val::Percent(100.0),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+        BackgroundColor(Color::NONE),
         Pickable::IGNORE,
-        ZIndex(0),
+        ZIndex(1),
         VoxelViewerWeatherOverlay,
     ));
-
-    commands
-        .spawn((
-            Name::new("Voxel Viewer Generation HUD"),
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(16.0),
-                left: Val::Px(16.0),
-                width: Val::Px(430.0),
-                padding: UiRect::all(Val::Px(12.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                border_radius: BorderRadius::all(Val::Px(6.0)),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(8.0),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.025, 0.040, 0.052, 0.76)),
-            BorderColor::all(Color::srgba(0.28, 0.48, 0.58, 0.55)),
-            ZIndex(10),
-        ))
-        .with_children(|panel| {
-            panel.spawn((
-                Text::new(""),
-                TextFont {
-                    font: font_handle.clone(),
-                    font_size: 14.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.82, 0.93, 0.95)),
-                VoxelViewerHudText,
-            ));
-            spawn_generation_dialog_button(panel, VoxelGenerationDialogAction::Open, "INPUTS", font_handle.clone());
-        });
-
-    spawn_generation_dialog(&mut commands, font_handle);
 }
 
 pub fn control_viewer_camera(
-    world: Res<VoxelViewerWorld>,
-    dialog: Res<VoxelGenerationDialogState>,
+    app_state: Res<State<AppState>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut mouse_motion: MessageReader<bevy::input::mouse::MouseMotion>,
     mut mouse_wheel: MessageReader<MouseWheel>,
     time: Res<Time>,
-    player_state: Res<PlayerState>,
-    mut reset_timer: ResMut<MiddleClickResetTimer>,
+    preferences: Res<GamePreferences>,
     mut camera_state: ResMut<VoxelViewerCamera>,
     mut camera_query: Query<&mut Transform, With<VoxelViewerCameraTag>>,
     player_query: Query<&Transform, (With<PlayerTag>, Without<VoxelViewerCameraTag>)>,
 ) {
-    if dialog.open {
-        mouse_wheel.clear();
-        mouse_motion.clear();
-        return;
+    let interactive = matches!(app_state.get(), AppState::Playing);
+    if matches!(app_state.get(), AppState::MainMenu | AppState::Loading) {
+        camera_state.yaw += time.delta_secs() * 0.055;
     }
 
-    // كشف النقر المزدوج بالزر الأوسط لإعادة ضبط زاوية وارتفاع الرؤية للافتراضي
-    if mouse.just_pressed(MouseButton::Middle) {
-        let current_time = time.elapsed_secs();
-        if current_time - reset_timer.last_click_time < 0.35 {
-            camera_state.yaw = -0.72;
-            camera_state.height = CAMERA_DEFAULT_HEIGHT;
-        }
-        reset_timer.last_click_time = current_time;
-    }
-
-    // تدوير الكاميرا عند الضغط والسحب بالزر الأوسط للماوس
-    if mouse.pressed(MouseButton::Middle) {
+    if interactive && mouse.pressed(MouseButton::Middle) {
         for motion in mouse_motion.read() {
-            camera_state.yaw += motion.delta.x * 0.005;
+            camera_state.yaw += motion.delta.x * 0.0045 * preferences.camera_sensitivity;
         }
     } else {
         mouse_motion.clear();
     }
 
-    // الكاميرا تتبع موقع البطل بالكامل عند حركته
-    if let Ok(player_transform) = player_query.single() {
-        camera_state.center = Vec2::new(
-            player_transform.translation.x / BLOCK_SIZE,
-            player_transform.translation.z / BLOCK_SIZE,
-        );
-    } else {
-        let forward = Vec2::new(-camera_state.yaw.sin(), -camera_state.yaw.cos());
-        let right = Vec2::new(camera_state.yaw.cos(), -camera_state.yaw.sin());
-        let mut movement = Vec2::ZERO;
-
-        if keyboard.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
-            movement += forward;
+    if interactive {
+        if keyboard.pressed(KeyCode::KeyQ) {
+            camera_state.yaw += 1.35 * time.delta_secs();
         }
-        if keyboard.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
-            movement -= forward;
+        if keyboard.pressed(KeyCode::KeyE) {
+            camera_state.yaw -= 1.35 * time.delta_secs();
         }
-        if keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
-            movement += right;
-        }
-        if keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
-            movement -= right;
-        }
-
-        if movement.length_squared() > 0.0 {
-            let speed = CAMERA_MOVE_SPEED
-                * if keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
-                    CAMERA_FAST_MULTIPLIER
-                } else {
-                    1.0
-                }
-                * (camera_state.height / CAMERA_DEFAULT_HEIGHT).clamp(0.50, 2.80);
-            camera_state.center += movement.normalize() * speed * time.delta_secs();
-        }
-    }
-
-    if keyboard.pressed(KeyCode::KeyQ) {
-        camera_state.yaw += CAMERA_ROTATE_SPEED * time.delta_secs();
-    }
-    if keyboard.pressed(KeyCode::KeyE) {
-        camera_state.yaw -= CAMERA_ROTATE_SPEED * time.delta_secs();
-    }
-    if keyboard.just_pressed(KeyCode::Space) {
-        camera_state.height = CAMERA_DEFAULT_HEIGHT;
     }
 
     let mut scroll = 0.0;
@@ -194,153 +118,130 @@ pub fn control_viewer_camera(
             MouseScrollUnit::Pixel => event.y * 0.08,
         };
     }
-    if scroll.abs() > f32::EPSILON {
-        camera_state.height = (camera_state.height * (1.0 - scroll * 0.10))
+    if interactive && scroll.abs() > f32::EPSILON {
+        camera_state.height = (camera_state.height * (1.0 - scroll * 0.09))
             .clamp(CAMERA_MIN_HEIGHT, CAMERA_MAX_HEIGHT);
     }
+
+    let target = if let Ok(player) = player_query.single() {
+        camera_state.center = Vec2::new(
+            player.translation.x / BLOCK_SIZE,
+            player.translation.z / BLOCK_SIZE,
+        );
+        player.translation + Vec3::Y * 2.0
+    } else {
+        Vec3::new(
+            camera_state.center.x * BLOCK_SIZE,
+            80.0,
+            camera_state.center.y * BLOCK_SIZE,
+        )
+    };
 
     let Ok(mut transform) = camera_query.single_mut() else {
         return;
     };
-    apply_viewer_camera_transform(world.settings, &camera_state, &mut transform, player_state.current_y);
+    let mut desired = Transform::default();
+    apply_viewer_camera_transform(&camera_state, &mut desired, target.y);
+    let smoothing = 1.0 - (-7.0 * time.delta_secs()).exp();
+    transform.translation = transform.translation.lerp(desired.translation, smoothing);
+    transform.rotation = transform.rotation.slerp(desired.rotation, smoothing);
+
+    if camera_state.shake > 0.001 && !preferences.reduced_motion {
+        let t = time.elapsed_secs() * 37.0;
+        transform.translation += Vec3::new(t.sin(), (t * 1.7).cos(), (t * 0.7).sin())
+            * camera_state.shake;
+        camera_state.shake = (camera_state.shake - time.delta_secs() * 2.2).max(0.0);
+    } else {
+        camera_state.shake = 0.0;
+    }
 }
 
 pub fn apply_viewer_camera_transform(
-    settings: VoxelWorldSettings,
     camera: &VoxelViewerCamera,
     transform: &mut Transform,
     target_y: f32,
 ) {
-    let surface_y = voxel_surface_y_at(
-        settings,
-        camera.center.x,
-        camera.center.y,
-        VoxelSurfaceMeshStyle::viewer(),
-    );
-    let focus_y = target_y.min(surface_y);
     let target = Vec3::new(
         camera.center.x * BLOCK_SIZE,
-        focus_y + SURFACE_TARGET_Y_OFFSET,
+        target_y + 2.8,
         camera.center.y * BLOCK_SIZE,
     );
-
     let yaw_rotation = Quat::from_rotation_y(camera.yaw);
     let pitch_rotation = Quat::from_rotation_x(-CAMERA_PITCH);
     let rotation = yaw_rotation * pitch_rotation;
-
-    let local_back = rotation * Vec3::Z;
-    let eye = target + local_back * camera.height;
-
+    let eye = target + rotation * Vec3::Z * camera.height;
     *transform = Transform::from_translation(eye).with_rotation(rotation);
 }
 
-pub fn update_viewer_weather_scene(
-    world: Res<VoxelViewerWorld>,
-    camera: Res<VoxelViewerCamera>,
-    mut weather_state: ResMut<VoxelViewerWeatherState>,
+pub fn update_world_mood(
+    session: Res<GameSession>,
+    time: Res<Time>,
     mut clear_color: ResMut<ClearColor>,
-    mut ambient_query: Query<&mut AmbientLight, With<VoxelViewerCameraTag>>,
+    mut camera_query: Query<(&mut AmbientLight, &mut DistanceFog), With<VoxelViewerCameraTag>>,
     mut sun_query: Query<&mut DirectionalLight, With<VoxelViewerSunTag>>,
     mut overlay_query: Query<&mut BackgroundColor, With<VoxelViewerWeatherOverlay>>,
 ) {
-    let column = sample_voxel_column(
-        world.settings,
-        camera.center.x.round() as i64,
-        camera.center.y.round() as i64,
-    );
-    weather_state.biome = column.biome;
-    weather_state.weather = column.weather;
+    let (sky, ambient, brightness, sun_color, sun_lux, fog, overlay) = match session.risk_band() {
+        RiskBand::Calm => (
+            Color::srgb(0.24, 0.58, 0.72),
+            Color::srgb(0.56, 0.74, 0.78),
+            780.0,
+            Color::srgb(1.0, 0.88, 0.58),
+            28_000.0,
+            Color::srgb(0.28, 0.58, 0.70),
+            Color::NONE,
+        ),
+        RiskBand::Warning => (
+            Color::srgb(0.50, 0.43, 0.29),
+            Color::srgb(0.72, 0.58, 0.38),
+            650.0,
+            Color::srgb(1.0, 0.63, 0.28),
+            22_000.0,
+            Color::srgb(0.48, 0.34, 0.24),
+            Color::srgba(0.68, 0.34, 0.08, 0.035),
+        ),
+        RiskBand::Critical => (
+            Color::srgb(0.25, 0.16, 0.34),
+            Color::srgb(0.48, 0.34, 0.58),
+            520.0,
+            Color::srgb(1.0, 0.34, 0.24),
+            16_000.0,
+            Color::srgb(0.28, 0.16, 0.34),
+            Color::srgba(0.46, 0.04, 0.12, 0.085),
+        ),
+        RiskBand::Terminal => {
+            let pulse = (time.elapsed_secs() * 5.0).sin() * 0.5 + 0.5;
+            (
+                Color::srgb(0.12 + pulse * 0.08, 0.04, 0.08),
+                Color::srgb(0.42, 0.16, 0.22),
+                430.0,
+                Color::srgb(1.0, 0.16 + pulse * 0.18, 0.10),
+                12_000.0,
+                Color::srgb(0.18, 0.04, 0.08),
+                Color::srgba(0.72, 0.0, 0.08, 0.10 + pulse * 0.08),
+            )
+        }
+    };
 
-    let scene = viewer_weather_scene(column.weather);
-    clear_color.0 = scene.sky_color;
-
-    if let Ok(mut ambient) = ambient_query.single_mut() {
-        ambient.color = scene.ambient_color;
-        ambient.brightness = scene.ambient_brightness;
+    clear_color.0 = sky;
+    if let Ok((mut ambient_light, mut distance_fog)) = camera_query.single_mut() {
+        ambient_light.color = ambient;
+        ambient_light.brightness = brightness;
+        distance_fog.color = fog;
     }
     if let Ok(mut sun) = sun_query.single_mut() {
-        sun.color = scene.sun_color;
-        sun.illuminance = scene.sun_illuminance;
+        sun.color = sun_color;
+        sun.illuminance = sun_lux;
     }
-    if let Ok(mut overlay) = overlay_query.single_mut() {
-        overlay.0 = scene.overlay_color;
-    }
-}
-
-pub fn viewer_weather_scene(weather: VoxelWeather) -> ViewerWeatherScene {
-    match weather {
-        VoxelWeather::Clear => ViewerWeatherScene {
-            sky_color: Color::srgb(0.34, 0.43, 0.55),
-            ambient_color: Color::srgb(0.60, 0.68, 0.76),
-            ambient_brightness: 650.0,
-            sun_color: Color::srgb(1.0, 0.94, 0.82),
-            sun_illuminance: 24_000.0,
-            overlay_color: Color::srgba(0.0, 0.0, 0.0, 0.0),
-        },
-        VoxelWeather::Cloudy => ViewerWeatherScene {
-            sky_color: Color::srgb(0.42, 0.47, 0.51),
-            ambient_color: Color::srgb(0.64, 0.68, 0.70),
-            ambient_brightness: 560.0,
-            sun_color: Color::srgb(0.86, 0.88, 0.84),
-            sun_illuminance: 16_000.0,
-            overlay_color: Color::srgba(0.50, 0.56, 0.60, 0.045),
-        },
-        VoxelWeather::Rain => ViewerWeatherScene {
-            sky_color: Color::srgb(0.25, 0.33, 0.40),
-            ambient_color: Color::srgb(0.46, 0.55, 0.62),
-            ambient_brightness: 470.0,
-            sun_color: Color::srgb(0.68, 0.78, 0.84),
-            sun_illuminance: 11_000.0,
-            overlay_color: Color::srgba(0.12, 0.22, 0.32, 0.095),
-        },
-        VoxelWeather::Storm => ViewerWeatherScene {
-            sky_color: Color::srgb(0.13, 0.16, 0.24),
-            ambient_color: Color::srgb(0.32, 0.39, 0.52),
-            ambient_brightness: 390.0,
-            sun_color: Color::srgb(0.48, 0.58, 0.76),
-            sun_illuminance: 7_500.0,
-            overlay_color: Color::srgba(0.05, 0.07, 0.14, 0.18),
-        },
-        VoxelWeather::Snow => ViewerWeatherScene {
-            sky_color: Color::srgb(0.62, 0.72, 0.78),
-            ambient_color: Color::srgb(0.80, 0.88, 0.92),
-            ambient_brightness: 690.0,
-            sun_color: Color::srgb(0.84, 0.92, 0.96),
-            sun_illuminance: 18_000.0,
-            overlay_color: Color::srgba(0.76, 0.88, 0.94, 0.075),
-        },
-        VoxelWeather::DustStorm => ViewerWeatherScene {
-            sky_color: Color::srgb(0.58, 0.43, 0.26),
-            ambient_color: Color::srgb(0.70, 0.55, 0.36),
-            ambient_brightness: 520.0,
-            sun_color: Color::srgb(0.98, 0.70, 0.40),
-            sun_illuminance: 12_500.0,
-            overlay_color: Color::srgba(0.72, 0.50, 0.24, 0.14),
-        },
-        VoxelWeather::Ashfall => ViewerWeatherScene {
-            sky_color: Color::srgb(0.34, 0.28, 0.25),
-            ambient_color: Color::srgb(0.58, 0.50, 0.45),
-            ambient_brightness: 430.0,
-            sun_color: Color::srgb(0.94, 0.48, 0.28),
-            sun_illuminance: 10_000.0,
-            overlay_color: Color::srgba(0.30, 0.24, 0.20, 0.17),
-        },
-        VoxelWeather::IonStorm => ViewerWeatherScene {
-            sky_color: Color::srgb(0.18, 0.22, 0.39),
-            ambient_color: Color::srgb(0.36, 0.58, 0.82),
-            ambient_brightness: 520.0,
-            sun_color: Color::srgb(0.46, 0.86, 1.0),
-            sun_illuminance: 13_000.0,
-            overlay_color: Color::srgba(0.08, 0.34, 0.62, 0.12),
-        },
+    if let Ok(mut color) = overlay_query.single_mut() {
+        color.0 = overlay;
     }
 }
 
 pub fn sync_visible_chunks(
     world: Res<VoxelViewerWorld>,
     camera: Res<VoxelViewerCamera>,
-    edits_res: Option<Res<VoxelWorldEdits>>,
-    primary_window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    edits: Res<VoxelWorldEdits>,
     mut loaded: ResMut<LoadedVoxelChunks>,
     mut render_assets: ResMut<VoxelViewerRenderAssets>,
     mut commands: Commands,
@@ -351,15 +252,11 @@ pub fn sync_visible_chunks(
         floor_div(camera.center.x.floor() as i64, DEFAULT_CHUNK_SIZE as i64),
         floor_div(camera.center.y.floor() as i64, DEFAULT_CHUNK_SIZE as i64),
     );
-    let viewport_aspect = primary_window
-        .single()
-        .map(window_aspect)
-        .unwrap_or(DEFAULT_VIEWPORT_ASPECT);
-    let active_radius = active_load_radius(camera.height, viewport_aspect, world.load_radius);
+    let radius = world.load_radius.clamp(3, LOAD_RADIUS_MAX);
     let signature = ChunkStreamSignature {
         settings: world.settings,
         center: center_coord,
-        radius: active_radius,
+        radius,
     };
 
     if loaded.signature != Some(signature) {
@@ -376,15 +273,17 @@ pub fn sync_visible_chunks(
         if loaded.chunks.contains_key(&coord) || !loaded.desired.contains(&coord) {
             continue;
         }
-
-        let chunk = if let Some(ref edits_res) = edits_res {
-            generate_edited_voxel_chunk(world.settings, coord, &edits_res.edits)
-        } else {
-            generate_voxel_chunk(world.settings, coord)
-        };
-
-        let mesh_step = chunk_mesh_step(camera.height, center_coord, coord);
-        let mesh = voxel_chunk_surface_mesh(world.settings, &chunk, mesh_step);
+        let chunk = generate_edited_voxel_chunk(world.settings, coord, &edits.edits);
+        let distance = (coord.x - center_coord.x)
+            .abs()
+            .max((coord.z - center_coord.z).abs());
+        let mesh_step = if distance >= 6 { 2 } else { 1 };
+        let mesh = astra_voxel_world::prelude::voxel_chunk_surface_mesh(
+            world.settings,
+            &chunk,
+            mesh_step,
+            VoxelSurfaceMeshStyle::viewer(),
+        );
         let entity = commands
             .spawn((
                 Name::new(format!("Voxel Chunk {coord}")),
@@ -398,7 +297,9 @@ pub fn sync_visible_chunks(
                 VoxelChunkEntity,
             ))
             .id();
+        loaded.voxel_data.insert(coord, chunk);
         loaded.chunks.insert(coord, entity);
+        loaded.dirty.remove(&coord);
         spawned += 1;
     }
 }
@@ -437,12 +338,52 @@ pub fn retire_chunks_outside_plan(commands: &mut Commands, loaded: &mut LoadedVo
         }
         if let Some(entity) = loaded.chunks.remove(&coord) {
             commands.entity(entity).despawn();
+            loaded.voxel_data.remove(&coord);
             retired += 1;
         }
     }
 }
 
-pub fn shared_terrain_material(
+pub fn invalidate_edit(
+    commands: &mut Commands,
+    loaded: &mut LoadedVoxelChunks,
+    center: VoxelBlockPosition,
+    radius: i32,
+) {
+    let size = DEFAULT_CHUNK_SIZE as i64;
+    let min_x = floor_div(center.x - i64::from(radius) - 1, size);
+    let max_x = floor_div(center.x + i64::from(radius) + 1, size);
+    let min_z = floor_div(center.z - i64::from(radius) - 1, size);
+    let max_z = floor_div(center.z + i64::from(radius) + 1, size);
+
+    for z in min_z..=max_z {
+        for x in min_x..=max_x {
+            let coord = VoxelChunkCoord::new(x, z);
+            if let Some(entity) = loaded.chunks.remove(&coord) {
+                commands.entity(entity).despawn();
+            }
+            loaded.voxel_data.remove(&coord);
+            loaded.dirty.insert(coord);
+            if loaded.desired.contains(&coord) && !loaded.pending.contains(&coord) {
+                loaded.pending.push_front(coord);
+            }
+        }
+    }
+}
+
+pub fn reload_loaded_chunks(commands: &mut Commands, loaded: &mut LoadedVoxelChunks) {
+    for entity in std::mem::take(&mut loaded.chunks).into_values() {
+        commands.entity(entity).despawn();
+    }
+    loaded.voxel_data.clear();
+    loaded.desired.clear();
+    loaded.pending.clear();
+    loaded.retiring.clear();
+    loaded.dirty.clear();
+    loaded.signature = None;
+}
+
+fn shared_terrain_material(
     render_assets: &mut VoxelViewerRenderAssets,
     materials: &mut Assets<StandardMaterial>,
 ) -> Handle<StandardMaterial> {
@@ -451,127 +392,51 @@ pub fn shared_terrain_material(
         .get_or_insert_with(|| {
             materials.add(StandardMaterial {
                 base_color: Color::WHITE,
-                unlit: false,
-                perceptual_roughness: 0.85,
-                metallic: 0.0,
+                perceptual_roughness: 0.82,
+                metallic: 0.03,
                 ..default()
             })
         })
         .clone()
 }
 
-pub fn chunk_stream_priority(center: VoxelChunkCoord, coord: VoxelChunkCoord) -> (i64, i64, i64) {
+fn chunk_stream_priority(center: VoxelChunkCoord, coord: VoxelChunkCoord) -> (i64, i64, i64) {
     let dx = coord.x - center.x;
     let dz = coord.z - center.z;
-
     (dx * dx + dz * dz, coord.z, coord.x)
 }
 
-pub fn chunk_mesh_step(camera_height: f32, center: VoxelChunkCoord, coord: VoxelChunkCoord) -> usize {
-    let distance = (coord.x - center.x).abs().max((coord.z - center.z).abs());
-
-    if camera_height >= LOD_LOW_CAMERA_HEIGHT || distance >= 12 {
-        4
-    } else if camera_height >= LOD_MEDIUM_CAMERA_HEIGHT || distance >= 7 {
-        2
-    } else {
-        1
-    }
-}
-
-pub fn window_aspect(window: &Window) -> f32 {
-    let height = window.resolution.height().max(1.0);
-
-    (window.resolution.width() / height).clamp(1.0, 2.60)
-}
-
-pub fn active_load_radius(camera_height: f32, viewport_aspect: f32, max_radius: i64) -> i64 {
-    let camera_height = camera_height.clamp(CAMERA_MIN_HEIGHT, CAMERA_MAX_HEIGHT);
-    let viewport_aspect = viewport_aspect.clamp(1.0, 2.60);
-    let half_fov_tan = (CAMERA_VERTICAL_FOV_RADIANS * 0.5).tan();
-    let half_view_height = camera_height * half_fov_tan;
-    let half_view_width = half_view_height * viewport_aspect;
-    let visible_half_diagonal = Vec2::new(half_view_width, half_view_height).length();
-    let ground_offset = camera_height * CAMERA_PITCH.cos();
-    let visible_blocks = (visible_half_diagonal + ground_offset) / BLOCK_SIZE;
-    let radius =
-        (visible_blocks / DEFAULT_CHUNK_SIZE as f32 + LOAD_RADIUS_MARGIN_CHUNKS).ceil() as i64;
-
-    radius.clamp(1, max_radius.clamp(1, LOAD_RADIUS_MAX))
-}
-
-pub fn desired_chunk_coords(center: VoxelChunkCoord, radius: i64) -> BTreeSet<VoxelChunkCoord> {
+fn desired_chunk_coords(center: VoxelChunkCoord, radius: i64) -> BTreeSet<VoxelChunkCoord> {
     let mut coords = BTreeSet::new();
     let radius = radius.clamp(1, LOAD_RADIUS_MAX);
     let radius_squared = radius * radius;
-
     for z in -radius..=radius {
         for x in -radius..=radius {
-            if x * x + z * z > radius_squared {
-                continue;
+            if x * x + z * z <= radius_squared {
+                coords.insert(VoxelChunkCoord::new(center.x + x, center.z + z));
             }
-            coords.insert(VoxelChunkCoord::new(center.x + x, center.z + z));
         }
     }
-
     coords
 }
 
-pub fn voxel_chunk_surface_mesh(
-    settings: VoxelWorldSettings,
-    chunk: &VoxelChunk,
-    mesh_step: usize,
-) -> Mesh {
-    astra_voxel_world::prelude::voxel_chunk_surface_mesh(
-        settings,
-        chunk,
-        mesh_step,
-        VoxelSurfaceMeshStyle::viewer(),
-    )
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub fn reload_loaded_chunks(commands: &mut Commands, loaded: &mut LoadedVoxelChunks) {
-    for entity in std::mem::take(&mut loaded.chunks).into_values() {
-        commands.entity(entity).despawn();
-    }
-    loaded.desired.clear();
-    loaded.pending.clear();
-    loaded.retiring.clear();
-    loaded.signature = None;
-}
-
-pub fn preset_index_for(composition: VoxelWorldComposition) -> Option<usize> {
-    VIEWER_PRESETS.iter().position(|preset| {
-        VoxelWorldComposition::preset(preset).is_some_and(|candidate| candidate == composition)
-    })
-}
-
-pub fn forced_biome_index_for(composition: VoxelWorldComposition) -> Option<usize> {
-    if (composition.biome_weights.total() - 1.0).abs() > f64::EPSILON {
-        return None;
+    #[test]
+    fn chunk_plan_is_circular_and_contains_center() {
+        let center = VoxelChunkCoord::new(4, -3);
+        let coords = desired_chunk_coords(center, 3);
+        assert!(coords.contains(&center));
+        assert!(coords.contains(&VoxelChunkCoord::new(7, -3)));
+        assert!(!coords.contains(&VoxelChunkCoord::new(7, 0)));
     }
 
-    VoxelBiome::ALL
-        .iter()
-        .position(|biome| composition.biome_weights.get(*biome) == 1.0)
-}
-
-pub fn forced_weather_index_for(composition: VoxelWorldComposition) -> Option<usize> {
-    if (composition.weather_weights.total() - 1.0).abs() > f64::EPSILON {
-        return None;
-    }
-
-    VoxelWeather::ALL
-        .iter()
-        .position(|weather| composition.weather_weights.get(*weather) == 1.0)
-}
-
-pub fn floor_div(a: i64, b: i64) -> i64 {
-    let d = a / b;
-    let r = a % b;
-    if r != 0 && ((a < 0) != (b < 0)) {
-        d - 1
-    } else {
-        d
+    #[test]
+    fn negative_floor_division_maps_chunks_correctly() {
+        assert_eq!(floor_div(-1, 16), -1);
+        assert_eq!(floor_div(-16, 16), -1);
+        assert_eq!(floor_div(-17, 16), -2);
     }
 }

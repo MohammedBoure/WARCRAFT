@@ -18,6 +18,10 @@ impl VoxelBlockPosition {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VoxelTerrainEdit {
+    SetBlock {
+        position: VoxelBlockPosition,
+        block: BlockKind,
+    },
     DigSphere {
         center: VoxelBlockPosition,
         radius: u16,
@@ -61,6 +65,15 @@ pub fn apply_terrain_edits(
 
     for edit in edits {
         match *edit {
+            VoxelTerrainEdit::SetBlock { position, block } => {
+                if position.y > 0
+                    && position.y < chunk.world_height() as i32
+                    && chunk.set_world(position.x, position.y, position.z, block)
+                {
+                    summary.changed_blocks += 1;
+                    summary.affected_columns += 1;
+                }
+            }
             VoxelTerrainEdit::DigSphere { center, radius } => {
                 summary += apply_sphere_edit(chunk, center, radius, BlockKind::Air);
             }
