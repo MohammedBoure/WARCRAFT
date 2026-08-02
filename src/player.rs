@@ -93,64 +93,73 @@ pub fn update_player_movement(
     world_res: Res<VoxelViewerWorld>,
     camera_state: Res<VoxelViewerCamera>,
     mut player_state: ResMut<PlayerState>,
-    mut player_query: Query<&mut Transform, (With<PlayerTag>, Without<PlayerSpotlightTag>)>,
-    mut light_query: Query<&mut Transform, (With<PlayerSpotlightTag>, Without<PlayerTag>)>,
+    mut transforms: ParamSet<(
+        Query<&mut Transform, With<PlayerTag>>,
+        Query<&mut Transform, With<PlayerSpotlightTag>>,
+    )>,
 ) {
-    let Ok(mut player_transform) = player_query.single_mut() else {
-        return;
-    };
+    let mut player_pos = Vec3::ZERO;
+    let mut player_forward = Vec3::Z;
 
-    // حساب الاتجاهات نسبياً لزاوية رؤية الكاميرا الحالية (Camera-Relative Movement)
-    let forward = Vec3::new(-camera_state.yaw.sin(), 0.0, -camera_state.yaw.cos());
-    let right = Vec3::new(camera_state.yaw.cos(), 0.0, -camera_state.yaw.sin());
+    {
+        let mut p0 = transforms.p0();
+        let Ok(mut player_transform) = p0.single_mut() else {
+            return;
+        };
 
-    let mut movement = Vec3::ZERO;
-    if keyboard.pressed(KeyCode::KeyW) || keyboard.pressed(KeyCode::ArrowUp) {
-        movement += forward;
+        // حساب الاتجاهات نسبياً لزاوية رؤية الكاميرا الحالية (Camera-Relative Movement)
+        let forward = Vec3::new(-camera_state.yaw.sin(), 0.0, -camera_state.yaw.cos());
+        let right = Vec3::new(camera_state.yaw.cos(), 0.0, -camera_state.yaw.sin());
+
+        let mut movement = Vec3::ZERO;
+        if keyboard.pressed(KeyCode::KeyW) || keyboard.pressed(KeyCode::ArrowUp) {
+            movement += forward;
+        }
+        if keyboard.pressed(KeyCode::KeyS) || keyboard.pressed(KeyCode::ArrowDown) {
+            movement -= forward;
+        }
+        if keyboard.pressed(KeyCode::KeyD) || keyboard.pressed(KeyCode::ArrowRight) {
+            movement += right;
+        }
+        if keyboard.pressed(KeyCode::KeyA) || keyboard.pressed(KeyCode::ArrowLeft) {
+            movement -= right;
+        }
+
+        let speed = if keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+            player_state.speed * 1.8
+        } else {
+            player_state.speed
+        };
+
+        if movement.length_squared() > 0.0 {
+            let move_dir = movement.normalize();
+            player_transform.translation += move_dir * speed * time.delta_secs();
+            player_transform.rotation = Quat::from_rotation_y((-move_dir.x).atan2(-move_dir.z));
+        }
+
+        // مطابقة الارتفاع مع تضاريس الفوكسل أو الكهوف
+        let world_x = player_transform.translation.x / BLOCK_SIZE;
+        let world_z = player_transform.translation.z / BLOCK_SIZE;
+        
+        let surface_y = voxel_surface_y_at(
+            world_res.settings,
+            world_x,
+            world_z,
+            VoxelSurfaceMeshStyle::viewer(),
+        );
+
+        player_state.surface_y = surface_y;
+        player_state.current_y = player_transform.translation.y;
+        player_state.is_underground = player_transform.translation.y < (surface_y - 2.5);
+
+        player_pos = player_transform.translation;
+        player_forward = *player_transform.forward();
     }
-    if keyboard.pressed(KeyCode::KeyS) || keyboard.pressed(KeyCode::ArrowDown) {
-        movement -= forward;
-    }
-    if keyboard.pressed(KeyCode::KeyD) || keyboard.pressed(KeyCode::ArrowRight) {
-        movement += right;
-    }
-    if keyboard.pressed(KeyCode::KeyA) || keyboard.pressed(KeyCode::ArrowLeft) {
-        movement -= right;
-    }
-
-    let speed = if keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
-        player_state.speed * 1.8
-    } else {
-        player_state.speed
-    };
-
-    if movement.length_squared() > 0.0 {
-        let move_dir = movement.normalize();
-        player_transform.translation += move_dir * speed * time.delta_secs();
-        player_transform.rotation = Quat::from_rotation_y((-move_dir.x).atan2(-move_dir.z));
-    }
-
-    // مطابقة الارتفاع مع تضاريس الفوكسل أو الكهوف
-    let world_x = player_transform.translation.x / BLOCK_SIZE;
-    let world_z = player_transform.translation.z / BLOCK_SIZE;
-    
-    let surface_y = voxel_surface_y_at(
-        world_res.settings,
-        world_x,
-        world_z,
-        VoxelSurfaceMeshStyle::viewer(),
-    );
-
-    player_state.surface_y = surface_y;
-    player_state.current_y = player_transform.translation.y;
-
-    // إذا كانت الشخصية أسفل سطح الأرض بـ 2.5 وحدة تعتبر داخل حفرة/كهف
-    player_state.is_underground = player_transform.translation.y < (surface_y - 2.5);
 
     // ربط الضوء المحمول بموقع البطل
-    if let Ok(mut light_transform) = light_query.single_mut() {
-        light_transform.translation = player_transform.translation + Vec3::Y * 1.2;
-        let p_forward = player_transform.forward();
-        light_transform.look_at(player_transform.translation + p_forward * 6.0 + Vec3::NEG_Y * 2.0, Vec3::Y);
+    let mut p1 = transforms.p1();
+    if let Ok(mut light_transform) = p1.single_mut() {
+        light_transform.translation = player_pos + Vec3::Y * 1.2;
+        light_transform.look_at(player_pos + player_forward * 6.0 + Vec3::NEG_Y * 2.0, Vec3::Y);
     }
 }
