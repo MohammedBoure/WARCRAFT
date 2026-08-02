@@ -63,6 +63,7 @@ fn main() {
                 setup_viewer_scene,
                 spawn_player_character,
                 setup_flowing_water_material,
+                setup_target_highlight,
                 setup_main_menu_ui,
             ),
         )
@@ -75,6 +76,7 @@ fn main() {
             Update,
             (
                 update_player_movement,
+                update_target_block_highlight,
                 handle_voxel_digging_and_building,
                 cycle_build_block_kind,
                 animate_flowing_water_system,

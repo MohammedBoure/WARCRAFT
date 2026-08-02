@@ -106,6 +106,8 @@ pub fn control_viewer_camera(
     world: Res<VoxelViewerWorld>,
     dialog: Res<VoxelGenerationDialogState>,
     keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut mouse_motion: MessageReader<bevy::input::mouse::MouseMotion>,
     mut mouse_wheel: MessageReader<MouseWheel>,
     time: Res<Time>,
     player_state: Res<PlayerState>,
@@ -115,7 +117,17 @@ pub fn control_viewer_camera(
 ) {
     if dialog.open {
         mouse_wheel.clear();
+        mouse_motion.clear();
         return;
+    }
+
+    // تدوير الكاميرا عند الضغط والسحب بالزر الأوسط للماوس
+    if mouse.pressed(MouseButton::Middle) {
+        for motion in mouse_motion.read() {
+            camera_state.yaw += motion.delta.x * 0.005;
+        }
+    } else {
+        mouse_motion.clear();
     }
 
     // الكاميرا تتبع موقع البطل بالكامل عند حركته
@@ -427,7 +439,7 @@ pub fn shared_terrain_material(
         .terrain_material
         .get_or_insert_with(|| {
             materials.add(StandardMaterial {
-                base_color: Color::srgb(0.2, 0.88, 0.38), // عشب زاهٍ ومبهج
+                base_color: Color::WHITE,
                 unlit: false,
                 perceptual_roughness: 0.85,
                 metallic: 0.0,

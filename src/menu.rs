@@ -162,21 +162,42 @@ pub fn handle_main_menu_interactions(
     mut world_res: ResMut<VoxelViewerWorld>,
     mut loaded: ResMut<LoadedVoxelChunks>,
     mut commands: Commands,
-    preset_buttons: Query<(&Interaction, &PresetOptionButton), Changed<Interaction>>,
-    start_buttons: Query<&Interaction, (With<StartGameButton>, Changed<Interaction>)>,
+    mut preset_buttons: Query<(&Interaction, &PresetOptionButton, &mut BackgroundColor, &mut BorderColor), Changed<Interaction>>,
+    mut start_buttons: Query<(&Interaction, &mut BackgroundColor), (With<StartGameButton>, Changed<Interaction>)>,
 ) {
-    for (interaction, preset_btn) in &preset_buttons {
-        if *interaction == Interaction::Pressed {
-            if let Some(preset) = VoxelWorldComposition::preset(preset_btn.preset) {
-                world_res.settings.composition = preset;
-                reload_loaded_chunks(&mut commands, &mut loaded);
+    for (interaction, preset_btn, mut bg_color, mut border_color) in &mut preset_buttons {
+        match *interaction {
+            Interaction::Pressed => {
+                *bg_color = BackgroundColor(Color::srgba(0.22, 0.48, 0.65, 0.95));
+                *border_color = BorderColor::all(Color::srgba(0.55, 0.85, 1.0, 0.90));
+                if let Some(preset) = VoxelWorldComposition::preset(preset_btn.preset) {
+                    world_res.settings.composition = preset;
+                    reload_loaded_chunks(&mut commands, &mut loaded);
+                }
+            }
+            Interaction::Hovered => {
+                *bg_color = BackgroundColor(Color::srgba(0.18, 0.35, 0.50, 0.95));
+                *border_color = BorderColor::all(Color::srgba(0.45, 0.75, 0.90, 0.75));
+            }
+            Interaction::None => {
+                *bg_color = BackgroundColor(Color::srgba(0.12, 0.24, 0.35, 0.90));
+                *border_color = BorderColor::all(Color::srgba(0.28, 0.55, 0.70, 0.50));
             }
         }
     }
 
-    for interaction in &start_buttons {
-        if *interaction == Interaction::Pressed {
-            next_state.set(AppState::Playing);
+    for (interaction, mut bg_color) in &mut start_buttons {
+        match *interaction {
+            Interaction::Pressed => {
+                *bg_color = BackgroundColor(Color::srgba(0.18, 0.85, 0.55, 0.98));
+                next_state.set(AppState::Playing);
+            }
+            Interaction::Hovered => {
+                *bg_color = BackgroundColor(Color::srgba(0.15, 0.75, 0.50, 0.98));
+            }
+            Interaction::None => {
+                *bg_color = BackgroundColor(Color::srgba(0.12, 0.65, 0.45, 0.95));
+            }
         }
     }
 }
