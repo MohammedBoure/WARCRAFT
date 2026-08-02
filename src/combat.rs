@@ -78,6 +78,7 @@ pub struct CombatAssets {
     spark: Handle<Mesh>,
     materials: Vec<Handle<StandardMaterial>>,
     fx_materials: Vec<Handle<StandardMaterial>>,
+    fx_core_materials: Vec<Handle<StandardMaterial>>,
     enemy_scenes: Vec<Handle<Scene>>,
     weapon_scenes: Vec<Handle<Scene>>,
 }
@@ -101,6 +102,22 @@ pub struct WeaponMuzzle {
 pub(crate) struct ProjectileTrail {
     last_position: Vec3,
     style: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct ProjectileVisual {
+    base_scale: Vec3,
+    light_intensity: f32,
+    light_range: f32,
+    phase: f32,
+}
+
+#[derive(Component)]
+pub(crate) struct ProjectileHalo {
+    base_scale: Vec3,
+    spin: f32,
+    pulse: f32,
+    phase: f32,
 }
 
 #[derive(Component)]
@@ -220,6 +237,34 @@ pub fn setup_combat_assets(
         })
     })
     .to_vec();
+    let fx_core_materials = [
+        (
+            Color::srgb(0.70, 1.0, 1.0),
+            LinearRgba::rgb(12.0, 36.0, 48.0),
+        ),
+        (
+            Color::srgb(1.0, 0.64, 0.94),
+            LinearRgba::rgb(44.0, 6.0, 27.0),
+        ),
+        (
+            Color::srgb(0.72, 0.82, 1.0),
+            LinearRgba::rgb(12.0, 20.0, 54.0),
+        ),
+        (
+            Color::srgb(1.0, 0.72, 0.38),
+            LinearRgba::rgb(46.0, 5.0, 0.6),
+        ),
+    ]
+    .map(|(base_color, emissive)| {
+        materials.add(StandardMaterial {
+            base_color,
+            emissive,
+            unlit: true,
+            alpha_mode: AlphaMode::Add,
+            ..default()
+        })
+    })
+    .to_vec();
 
     commands.insert_resource(CombatAssets {
         shield: meshes.add(Sphere::new(8.5).mesh().ico(3).expect("sphere")),
@@ -230,6 +275,7 @@ pub fn setup_combat_assets(
         spark: meshes.add(Cuboid::new(0.08, 0.08, 0.62)),
         materials: created_materials,
         fx_materials,
+        fx_core_materials,
         enemy_scenes: [
             "models/kenney-space/alien.glb",
             "models/kenney-space/astronautB.glb",
@@ -1364,6 +1410,8 @@ fn spawn_shot(
     shot.velocity = velocity;
     let style = fx_style(shot.kind);
     let direction = velocity.normalize_or_zero();
+    let (core_size, halo_size, tail_length, light_intensity, light_range) =
+        projectile_visual_profile(shot.kind);
     spawn_muzzle_fx(
         commands,
         assets,
@@ -1372,24 +1420,95 @@ fn spawn_shot(
         style,
         if shot.from_player { 1.25 } else { 0.72 },
     );
-    commands.spawn((
-        Mesh3d(assets.shot.clone()),
-        MeshMaterial3d(assets.materials[material].clone()),
-        Transform::from_translation(origin).with_scale(Vec3::splat(
-            if shot.kind == DamageKind::Plasma {
-                1.75
-            } else {
-                1.0
+    let phase = origin.x * 0.17 + origin.y * 0.11 + origin.z * 0.23;
+    commands
+        .spawn((
+            Name::new("Energy projectile core"),
+            Mesh3d(assets.shot.clone()),
+            MeshMaterial3d(assets.materials[material].clone()),
+            Transform::from_translation(origin).with_scale(Vec3::splat(core_size)),
+            PointLight {
+                color: fx_color(style),
+                intensity: light_intensity,
+                range: light_range,
+                radius: 0.16 * core_size,
+                shadows_enabled: false,
+                ..default()
             },
-        )),
-        ProjectileTrail {
-            last_position: origin,
-            style,
-        },
-        shot,
-        RunEntity,
-    ));
+            ProjectileVisual {
+                base_scale: Vec3::splat(core_size),
+                light_intensity,
+                light_range,
+                phase,
+            },
+            ProjectileTrail {
+                last_position: origin,
+                style,
+            },
+            shot,
+            RunEntity,
+        ))
+        .with_children(|projectile| {
+            projectile.spawn((
+                Name::new("Projectile energy halo"),
+                Mesh3d(assets.flash.clone()),
+                MeshMaterial3d(assets.fx_materials[style].clone()),
+                Transform::from_scale(Vec3::splat(halo_size)),
+                ProjectileHalo {
+                    base_scale: Vec3::splat(halo_size),
+                    spin: 2.8,
+                    pulse: 0.12,
+                    phase,
+                },
+            ));
+            projectile.spawn((
+                Name::new("Projectile containment ring"),
+                Mesh3d(assets.ring.clone()),
+                MeshMaterial3d(assets.fx_core_materials[style].clone()),
+                Transform {
+                    translation: Vec3::ZERO,
+                    rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                    scale: Vec3::splat(core_size * 0.92),
+                },
+                ProjectileHalo {
+                    base_scale: Vec3::splat(core_size * 0.92),
+                    spin: -7.6,
+                    pulse: 0.08,
+                    phase: phase + 1.7,
+                },
+            ));
+            projectile.spawn((
+                Name::new("Projectile plasma tail"),
+                Mesh3d(assets.beam.clone()),
+                MeshMaterial3d(assets.fx_materials[style].clone()),
+                Transform::from_translation(Vec3::Z * -tail_length * 0.48).with_scale(Vec3::new(
+                    core_size * 0.38,
+                    core_size * 0.38,
+                    tail_length,
+                )),
+            ));
+            projectile.spawn((
+                Name::new("Projectile hot tail"),
+                Mesh3d(assets.beam.clone()),
+                MeshMaterial3d(assets.fx_core_materials[style].clone()),
+                Transform::from_translation(Vec3::Z * -tail_length * 0.44).with_scale(Vec3::new(
+                    core_size * 0.13,
+                    core_size * 0.13,
+                    tail_length * 0.86,
+                )),
+            ));
+        });
 }
+
+fn projectile_visual_profile(kind: DamageKind) -> (f32, f32, f32, f32, f32) {
+    match kind {
+        DamageKind::Pulse => (0.60, 1.15, 2.8, 3_600.0, 9.0),
+        DamageKind::Plasma => (1.48, 1.85, 5.6, 16_000.0, 18.0),
+        DamageKind::Ion => (0.94, 1.42, 6.8, 9_200.0, 15.0),
+        DamageKind::Enemy => (0.76, 1.18, 3.8, 4_600.0, 11.0),
+    }
+}
+
 fn melee_range(kind: EnemyKind) -> f32 {
     match kind {
         EnemyKind::Crawler => 4.4,
@@ -1540,13 +1659,33 @@ pub fn update_weapon_recoil(time: Res<Time>, mut rigs: Query<(&mut Transform, &m
 
 pub fn update_combat_effects(
     time: Res<Time>,
-    mut effects: Query<(
-        Entity,
-        &mut Transform,
-        &mut CombatFx,
-        Option<&mut FxMotion>,
-        Option<&mut PointLight>,
-    )>,
+    mut effects: Query<
+        (
+            Entity,
+            &mut Transform,
+            &mut CombatFx,
+            Option<&mut FxMotion>,
+            Option<&mut PointLight>,
+        ),
+        (
+            With<CombatFx>,
+            Without<ProjectileVisual>,
+            Without<ProjectileHalo>,
+        ),
+    >,
+    mut projectiles: Query<
+        (
+            &ProjectileVisual,
+            &Projectile,
+            &mut Transform,
+            Option<&mut PointLight>,
+        ),
+        (Without<CombatFx>, Without<ProjectileHalo>),
+    >,
+    mut halos: Query<
+        (&ChildOf, &ProjectileHalo, &mut Transform),
+        (Without<CombatFx>, Without<ProjectileVisual>),
+    >,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -1572,6 +1711,28 @@ pub fn update_combat_effects(
         if let Some(mut light) = light {
             light.intensity = effect.peak_light * (1.0 - progress).powi(2);
         }
+    }
+    let elapsed = time.elapsed_secs();
+    for (visual, shot, mut transform, light) in &mut projectiles {
+        let speed_ratio = (shot.velocity.length() / 42.0).clamp(0.55, 1.35);
+        let pulse = 1.0 + (elapsed * (8.0 + speed_ratio * 2.0) + visual.phase).sin() * 0.10;
+        transform.scale = visual.base_scale * pulse;
+        if let Some(mut light) = light {
+            light.intensity = visual.light_intensity * (0.84 + pulse * 0.18) * speed_ratio;
+            light.range = visual.light_range * (0.90 + pulse * 0.12);
+        }
+    }
+    for (parent, halo, mut transform) in &mut halos {
+        let Ok((visual, shot, _, _)) = projectiles.get(parent.parent()) else {
+            continue;
+        };
+        let speed_ratio = (shot.velocity.length() / 42.0).clamp(0.55, 1.35);
+        let pulse = 1.0
+            + (elapsed * (9.5 + speed_ratio * 2.5) + halo.phase).sin() * halo.pulse * speed_ratio;
+        transform.scale = halo.base_scale * pulse;
+        transform.rotate_z(halo.spin * dt * (0.75 + speed_ratio * 0.25));
+        transform.translation.y =
+            (elapsed * 5.5 + visual.phase + halo.phase).sin() * 0.035 * speed_ratio;
     }
 }
 
@@ -1606,7 +1767,7 @@ fn spawn_muzzle_fx(
     commands.spawn((
         Name::new("Muzzle flash"),
         Mesh3d(assets.flash.clone()),
-        MeshMaterial3d(assets.fx_materials[style].clone()),
+        MeshMaterial3d(assets.fx_core_materials[style].clone()),
         Transform::from_translation(origin).with_scale(start_scale),
         PointLight {
             color: fx_color(style),
@@ -1625,7 +1786,41 @@ fn spawn_muzzle_fx(
         },
         RunEntity,
     ));
+    let bloom_scale = Vec3::splat(0.44 * power);
+    commands.spawn((
+        Name::new("Muzzle energy bloom"),
+        Mesh3d(assets.flash.clone()),
+        MeshMaterial3d(assets.fx_materials[style].clone()),
+        Transform::from_translation(origin).with_scale(bloom_scale),
+        CombatFx {
+            age: 0.0,
+            duration: 0.12,
+            start_scale: bloom_scale,
+            end_scale: Vec3::splat(1.9 * power),
+            peak_light: 0.0,
+        },
+        RunEntity,
+    ));
     if direction != Vec3::ZERO {
+        let ring_scale = Vec3::splat(0.30 * power);
+        commands.spawn((
+            Name::new("Muzzle containment ring"),
+            Mesh3d(assets.ring.clone()),
+            MeshMaterial3d(assets.fx_core_materials[style].clone()),
+            Transform {
+                translation: origin + direction * 0.08,
+                rotation: Quat::from_rotation_arc(Vec3::Y, direction),
+                scale: ring_scale,
+            },
+            CombatFx {
+                age: 0.0,
+                duration: 0.14,
+                start_scale: ring_scale,
+                end_scale: Vec3::splat(1.75 * power),
+                peak_light: 0.0,
+            },
+            RunEntity,
+        ));
         spawn_tracer_fx(
             commands,
             assets,
@@ -1652,20 +1847,38 @@ fn spawn_tracer_fx(
     if distance <= 0.01 {
         return;
     }
-    let mut transform = Transform::from_translation(start + delta * 0.5);
-    transform.look_at(end, Vec3::Y);
-    let start_scale = Vec3::new(thickness, thickness, distance);
-    transform.scale = start_scale;
+    let mut glow_transform = Transform::from_translation(start + delta * 0.5);
+    glow_transform.look_at(end, Vec3::Y);
+    let glow_scale = Vec3::new(thickness, thickness, distance);
+    glow_transform.scale = glow_scale;
     commands.spawn((
-        Name::new("Energy tracer"),
+        Name::new("Energy tracer glow"),
         Mesh3d(assets.beam.clone()),
         MeshMaterial3d(assets.fx_materials[style].clone()),
-        transform,
+        glow_transform,
         CombatFx {
             age: 0.0,
-            duration: duration.max(0.02),
-            start_scale,
-            end_scale: Vec3::new(0.03, 0.03, distance * 0.94),
+            duration: (duration * 1.12).max(0.025),
+            start_scale: glow_scale,
+            end_scale: Vec3::new(0.04, 0.04, distance * 0.96),
+            peak_light: 0.0,
+        },
+        RunEntity,
+    ));
+    let mut core_transform = Transform::from_translation(start + delta * 0.5);
+    core_transform.look_at(end, Vec3::Y);
+    let core_scale = Vec3::new(thickness * 0.30, thickness * 0.30, distance * 0.98);
+    core_transform.scale = core_scale;
+    commands.spawn((
+        Name::new("Energy tracer hot core"),
+        Mesh3d(assets.beam.clone()),
+        MeshMaterial3d(assets.fx_core_materials[style].clone()),
+        core_transform,
+        CombatFx {
+            age: 0.0,
+            duration: (duration * 0.78).max(0.02),
+            start_scale: core_scale,
+            end_scale: Vec3::new(0.02, 0.02, distance * 0.90),
             peak_light: 0.0,
         },
         RunEntity,
@@ -1683,7 +1896,7 @@ fn spawn_impact_fx(
     commands.spawn((
         Name::new("Energy impact core"),
         Mesh3d(assets.flash.clone()),
-        MeshMaterial3d(assets.fx_materials[style].clone()),
+        MeshMaterial3d(assets.fx_core_materials[style].clone()),
         Transform::from_translation(position).with_scale(core_scale),
         PointLight {
             color: fx_color(style),
@@ -1702,6 +1915,21 @@ fn spawn_impact_fx(
         },
         RunEntity,
     ));
+    let bloom_scale = Vec3::splat(0.42 * power);
+    commands.spawn((
+        Name::new("Energy impact bloom"),
+        Mesh3d(assets.flash.clone()),
+        MeshMaterial3d(assets.fx_materials[style].clone()),
+        Transform::from_translation(position).with_scale(bloom_scale),
+        CombatFx {
+            age: 0.0,
+            duration: 0.30 + power * 0.045,
+            start_scale: bloom_scale,
+            end_scale: Vec3::splat(3.4 * power),
+            peak_light: 0.0,
+        },
+        RunEntity,
+    ));
     let ring_scale = Vec3::splat(0.22 * power);
     commands.spawn((
         Name::new("Energy impact ring"),
@@ -1713,6 +1941,21 @@ fn spawn_impact_fx(
             duration: 0.24 + power * 0.045,
             start_scale: ring_scale,
             end_scale: Vec3::splat(2.8 * power),
+            peak_light: 0.0,
+        },
+        RunEntity,
+    ));
+    let hot_ring_scale = Vec3::splat(0.13 * power);
+    commands.spawn((
+        Name::new("Energy impact hot ring"),
+        Mesh3d(assets.ring.clone()),
+        MeshMaterial3d(assets.fx_core_materials[style].clone()),
+        Transform::from_translation(position + Vec3::Y * 0.12).with_scale(hot_ring_scale),
+        CombatFx {
+            age: 0.0,
+            duration: 0.17 + power * 0.03,
+            start_scale: hot_ring_scale,
+            end_scale: Vec3::splat(1.9 * power),
             peak_light: 0.0,
         },
         RunEntity,
@@ -1793,5 +2036,16 @@ mod tests {
         let flight_time = target.z / velocity.z;
         let height = velocity.y * flight_time - 0.5 * 17.0 * flight_time * flight_time;
         assert!(height.abs() < 0.01, "expected a level impact, got {height}");
+    }
+
+    #[test]
+    fn projectile_visual_profiles_keep_each_weapon_readable() {
+        let plasma = projectile_visual_profile(DamageKind::Plasma);
+        let ion = projectile_visual_profile(DamageKind::Ion);
+        let enemy = projectile_visual_profile(DamageKind::Enemy);
+        assert!(plasma.0 > ion.0);
+        assert!(ion.2 > plasma.2);
+        assert!(plasma.3 > enemy.3);
+        assert!(enemy.4 < plasma.4);
     }
 }
