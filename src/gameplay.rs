@@ -1,7 +1,7 @@
 use astra_voxel_world::prelude::*;
 use bevy::prelude::*;
 
-use crate::interaction::{block_world_center, VoxelWorldEdits};
+use crate::interaction::{VoxelWorldEdits, block_world_center};
 use crate::player::PlayerTag;
 use crate::state::*;
 use crate::world::{invalidate_edit, reload_loaded_chunks};
@@ -252,7 +252,10 @@ pub fn update_run_clock(
     }
     let delta = time.delta_secs();
     session.elapsed += delta;
-    let rate = if matches!(session.phase, GamePhase::Evacuating | GamePhase::Stabilizing) {
+    let rate = if matches!(
+        session.phase,
+        GamePhase::Evacuating | GamePhase::Stabilizing
+    ) {
         balance.final_risk_per_second
     } else {
         balance.passive_risk_per_second
@@ -274,8 +277,22 @@ pub fn update_run_clock(
 pub fn handle_final_interaction(
     keyboard: Res<ButtonInput<KeyCode>>,
     player: Query<&Transform, With<PlayerTag>>,
-    beacon: Query<&Transform, (With<EvacuationBeacon>, Without<PlayerTag>, Without<WorldCore>)>,
-    core: Query<&Transform, (With<WorldCore>, Without<PlayerTag>, Without<EvacuationBeacon>)>,
+    beacon: Query<
+        &Transform,
+        (
+            With<EvacuationBeacon>,
+            Without<PlayerTag>,
+            Without<WorldCore>,
+        ),
+    >,
+    core: Query<
+        &Transform,
+        (
+            With<WorldCore>,
+            Without<PlayerTag>,
+            Without<EvacuationBeacon>,
+        ),
+    >,
     mut session: ResMut<GameSession>,
     mut next_state: ResMut<NextState<AppState>>,
     mut finish_events: MessageWriter<RunFinished>,
@@ -287,12 +304,20 @@ pub fn handle_final_interaction(
         return;
     };
     let outcome = match session.phase {
-        GamePhase::Evacuating if beacon.single().is_ok_and(|target| {
-            player.translation.distance(target.translation) <= INTERACT_RADIUS
-        }) => Some(RunOutcome::PeopleSaved),
-        GamePhase::Stabilizing if core.single().is_ok_and(|target| {
-            player.translation.distance(target.translation) <= INTERACT_RADIUS
-        }) => Some(RunOutcome::WorldSaved),
+        GamePhase::Evacuating
+            if beacon.single().is_ok_and(|target| {
+                player.translation.distance(target.translation) <= INTERACT_RADIUS
+            }) =>
+        {
+            Some(RunOutcome::PeopleSaved)
+        }
+        GamePhase::Stabilizing
+            if core.single().is_ok_and(|target| {
+                player.translation.distance(target.translation) <= INTERACT_RADIUS
+            }) =>
+        {
+            Some(RunOutcome::WorldSaved)
+        }
         _ => None,
     };
     if let Some(outcome) = outcome {
@@ -340,7 +365,10 @@ pub fn drive_collapses(
     mut commands: Commands,
 ) {
     if session.criticality < 70.0
-        || !matches!(session.phase, GamePhase::Evacuating | GamePhase::Stabilizing)
+        || !matches!(
+            session.phase,
+            GamePhase::Evacuating | GamePhase::Stabilizing
+        )
     {
         director.timer.reset();
         return;
@@ -354,8 +382,8 @@ pub fn drive_collapses(
     let count = session.collapse_count as f32 + session.elapsed * 0.07;
     let angle = count * 2.399_963;
     let distance = 16.0 + (count.sin().abs() * 14.0);
-    let center_world = player.translation
-        + Vec3::new(angle.cos() * distance, 0.0, angle.sin() * distance);
+    let center_world =
+        player.translation + Vec3::new(angle.cos() * distance, 0.0, angle.sin() * distance);
     let center = VoxelBlockPosition::new(
         (center_world.x / BLOCK_SIZE).round() as i64,
         (player.translation.y / HEIGHT_SCALE).round() as i32 - 1,
@@ -409,14 +437,15 @@ pub fn enter_main_menu(mut session: ResMut<GameSession>) {
     *session = GameSession::default();
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn objective_coordinates_are_distinct_and_deterministic() {
-        let unique = CRYSTAL_COORDS.into_iter().collect::<std::collections::BTreeSet<_>>();
+        let unique = CRYSTAL_COORDS
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(unique.len(), 3);
         assert_eq!(CRYSTAL_COORDS[0], (18, 10));
     }

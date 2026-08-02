@@ -1,15 +1,19 @@
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 mod audio;
 mod config;
 mod gameplay;
 mod interaction;
 mod menu;
 mod player;
+mod qa;
 mod state;
 mod ui;
 mod world;
 
 use std::env;
 
+use bevy::asset::AssetPlugin;
 use bevy::prelude::*;
 
 use crate::audio::*;
@@ -17,6 +21,7 @@ use crate::gameplay::*;
 use crate::interaction::*;
 use crate::menu::*;
 use crate::player::*;
+use crate::qa::*;
 use crate::state::*;
 use crate::ui::*;
 use crate::world::*;
@@ -32,16 +37,23 @@ fn main() {
     }
 
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "نقطة الانهيار — Critical Point".to_string(),
-                resolution: (1280, 720).into(),
-                resizable: true,
-                present_mode: bevy::window::PresentMode::AutoVsync,
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "نقطة الانهيار — Critical Point".to_string(),
+                        resolution: (1280, 720).into(),
+                        resizable: true,
+                        present_mode: bevy::window::PresentMode::AutoVsync,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(AssetPlugin {
+                    file_path: asset_root(),
+                    ..default()
+                }),
+        )
         .init_state::<AppState>()
         .insert_resource(ClearColor(Color::srgb(0.025, 0.055, 0.075)))
         .insert_resource(VoxelViewerWorld {
@@ -59,8 +71,6 @@ fn main() {
         .init_resource::<BalanceConfig>()
         .init_resource::<GamePreferences>()
         .init_resource::<PlayerState>()
-        .init_resource::<MiddleClickResetTimer>()
-        .init_resource::<VoxelViewerWeatherState>()
         .init_resource::<VoxelWorldEdits>()
         .init_resource::<MiningState>()
         .init_resource::<LoadedVoxelChunks>()
@@ -69,13 +79,13 @@ fn main() {
         .init_resource::<CollapseDirector>()
         .init_resource::<AudioRiskState>()
         .init_resource::<LoadingTimer>()
+        .init_resource::<QaScreenshot>()
         .add_message::<CrystalCollected>()
         .add_message::<CriticalityChanged>()
         .add_message::<CollapseTriggered>()
         .add_message::<ChoiceCommitted>()
         .add_message::<RunFinished>()
         .add_message::<VoxelActionSound>()
-        .add_systems(Startup, load_shared_assets)
         .add_systems(
             PostStartup,
             (
@@ -134,6 +144,7 @@ fn main() {
                 animate_player,
                 sync_player_visibility,
                 update_hud,
+                capture_qa_screenshot,
                 toggle_pause,
                 pause_when_unfocused,
                 handle_overlay_buttons,
@@ -154,4 +165,14 @@ fn main() {
             ),
         )
         .run();
+}
+
+fn asset_root() -> String {
+    let beside_executable = env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join("assets")));
+    let path = beside_executable
+        .filter(|candidate| candidate.is_dir())
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"));
+    path.to_string_lossy().into_owned()
 }

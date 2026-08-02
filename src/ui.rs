@@ -157,10 +157,42 @@ pub fn update_hud(
     session: Res<GameSession>,
     mut hud: Query<&mut Visibility, With<HudRoot>>,
     mut risk_fill: Query<(&mut Node, &mut BackgroundColor), With<RiskFill>>,
-    mut risk_text: Query<&mut Text, (With<RiskText>, Without<ObjectiveText>, Without<InventoryText>, Without<TimerText>)>,
-    mut objective: Query<&mut Text, (With<ObjectiveText>, Without<RiskText>, Without<InventoryText>, Without<TimerText>)>,
-    mut inventory: Query<&mut Text, (With<InventoryText>, Without<RiskText>, Without<ObjectiveText>, Without<TimerText>)>,
-    mut timer: Query<&mut Text, (With<TimerText>, Without<RiskText>, Without<ObjectiveText>, Without<InventoryText>)>,
+    mut risk_text: Query<
+        &mut Text,
+        (
+            With<RiskText>,
+            Without<ObjectiveText>,
+            Without<InventoryText>,
+            Without<TimerText>,
+        ),
+    >,
+    mut objective: Query<
+        &mut Text,
+        (
+            With<ObjectiveText>,
+            Without<RiskText>,
+            Without<InventoryText>,
+            Without<TimerText>,
+        ),
+    >,
+    mut inventory: Query<
+        &mut Text,
+        (
+            With<InventoryText>,
+            Without<RiskText>,
+            Without<ObjectiveText>,
+            Without<TimerText>,
+        ),
+    >,
+    mut timer: Query<
+        &mut Text,
+        (
+            With<TimerText>,
+            Without<RiskText>,
+            Without<ObjectiveText>,
+            Without<InventoryText>,
+        ),
+    >,
 ) {
     if let Ok(mut visibility) = hud.single_mut() {
         *visibility = if matches!(
@@ -194,10 +226,12 @@ pub fn update_hud(
         );
     }
     if let Ok(mut text) = timer.single_mut() {
-        text.0 = session.phase_time_remaining.map_or_else(String::new, |remaining| {
-            let seconds = remaining.ceil() as u32;
-            format!("الوقت المتبقي  {:02}:{:02}", seconds / 60, seconds % 60)
-        });
+        text.0 = session
+            .phase_time_remaining
+            .map_or_else(String::new, |remaining| {
+                let seconds = remaining.ceil() as u32;
+                format!("الوقت المتبقي  {:02}:{:02}", seconds / 60, seconds % 60)
+            });
     }
 }
 
@@ -228,7 +262,11 @@ pub fn pause_when_unfocused(
     }
 }
 
-pub fn setup_pause_overlay(mut commands: Commands, font: Res<ArabicFont>, prefs: Res<GamePreferences>) {
+pub fn setup_pause_overlay(
+    mut commands: Commands,
+    font: Res<ArabicFont>,
+    prefs: Res<GamePreferences>,
+) {
     commands
         .spawn(screen_container(Color::srgba(0.01, 0.02, 0.035, 0.72)))
         .insert((ScreenRoot, ZIndex(75)))
@@ -236,14 +274,42 @@ pub fn setup_pause_overlay(mut commands: Commands, font: Res<ArabicFont>, prefs:
             root.spawn(panel_node(480.0)).with_children(|panel| {
                 spawn_title(panel, &font.0, "توقف مؤقت", 38.0);
                 spawn_action_button(panel, &font.0, "متابعة", OverlayAction::Resume, true);
-                spawn_action_button(panel, &font.0, "إعادة المهمة", OverlayAction::Restart, false);
-                spawn_action_button(panel, &font.0, "القائمة الرئيسية", OverlayAction::MainMenu, false);
-                spawn_action_button(panel, &font.0, "خفض الصوت", OverlayAction::VolumeDown, false);
+                spawn_action_button(
+                    panel,
+                    &font.0,
+                    "إعادة المهمة",
+                    OverlayAction::Restart,
+                    false,
+                );
+                spawn_action_button(
+                    panel,
+                    &font.0,
+                    "القائمة الرئيسية",
+                    OverlayAction::MainMenu,
+                    false,
+                );
+                spawn_action_button(
+                    panel,
+                    &font.0,
+                    "خفض الصوت",
+                    OverlayAction::VolumeDown,
+                    false,
+                );
                 spawn_action_button(panel, &font.0, "رفع الصوت", OverlayAction::VolumeUp, false);
-                spawn_action_button(panel, &font.0, "تقليل الاهتزاز والوميض", OverlayAction::ToggleMotion, false);
+                spawn_action_button(
+                    panel,
+                    &font.0,
+                    "تقليل الاهتزاز والوميض",
+                    OverlayAction::ToggleMotion,
+                    false,
+                );
                 panel.spawn((
                     Text::new(settings_text(&prefs)),
-                    TextFont { font: font.0.clone(), font_size: 14.0, ..default() },
+                    TextFont {
+                        font: font.0.clone(),
+                        font_size: 14.0,
+                        ..default()
+                    },
                     TextColor(Color::srgb(0.68, 0.84, 0.82)),
                     SettingsSummary,
                 ));
@@ -261,12 +327,28 @@ pub fn setup_decision_overlay(mut commands: Commands, font: Res<ArabicFont>) {
                 spawn_title(panel, &font.0, "بلغ العالم النقطة الحرجة", 38.0);
                 panel.spawn((
                     Text::new("الشظايا الثلاث تكفي لمسار واحد فقط. لا رجعة بعد اختيارك."),
-                    TextFont { font: font.0.clone(), font_size: 19.0, ..default() },
+                    TextFont {
+                        font: font.0.clone(),
+                        font_size: 19.0,
+                        ..default()
+                    },
                     TextColor(Color::srgb(1.0, 0.84, 0.76)),
                     TextLayout::new_with_justify(Justify::Center),
                 ));
-                spawn_action_button(panel, &font.0, "إخلاء المستعمرة — 90 ثانية، العالم سيُفقد", OverlayAction::ChooseEvacuate, true);
-                spawn_action_button(panel, &font.0, "تثبيت النواة — 120 ثانية، خطر مضاعف", OverlayAction::ChooseStabilize, false);
+                spawn_action_button(
+                    panel,
+                    &font.0,
+                    "إخلاء المستعمرة — 90 ثانية، العالم سيُفقد",
+                    OverlayAction::ChooseEvacuate,
+                    true,
+                );
+                spawn_action_button(
+                    panel,
+                    &font.0,
+                    "تثبيت النواة — 120 ثانية، خطر مضاعف",
+                    OverlayAction::ChooseStabilize,
+                    false,
+                );
             });
         });
 }
@@ -300,23 +382,46 @@ pub fn setup_ending_overlay(
             root.spawn(panel_node(660.0)).with_children(|panel| {
                 panel.spawn((
                     Text::new(title),
-                    TextFont { font: font.0.clone(), font_size: 46.0, ..default() },
+                    TextFont {
+                        font: font.0.clone(),
+                        font_size: 46.0,
+                        ..default()
+                    },
                     TextColor(color),
                     TextLayout::new_with_justify(Justify::Center),
                 ));
                 panel.spawn((
                     Text::new(body),
-                    TextFont { font: font.0.clone(), font_size: 20.0, ..default() },
+                    TextFont {
+                        font: font.0.clone(),
+                        font_size: 20.0,
+                        ..default()
+                    },
                     TextColor(Color::srgb(0.88, 0.94, 0.92)),
                     TextLayout::new_with_justify(Justify::Center),
                 ));
                 panel.spawn((
-                    Text::new(format!("الوقت: {}:{:02}   |   الخطر النهائي: {:.0}%", (session.elapsed as u32) / 60, (session.elapsed as u32) % 60, session.criticality)),
-                    TextFont { font: font.0.clone(), font_size: 16.0, ..default() },
+                    Text::new(format!(
+                        "الوقت: {}:{:02}   |   الخطر النهائي: {:.0}%",
+                        (session.elapsed as u32) / 60,
+                        (session.elapsed as u32) % 60,
+                        session.criticality
+                    )),
+                    TextFont {
+                        font: font.0.clone(),
+                        font_size: 16.0,
+                        ..default()
+                    },
                     TextColor(Color::srgb(0.70, 0.82, 0.82)),
                 ));
                 spawn_action_button(panel, &font.0, "إعادة اللعب", OverlayAction::Restart, true);
-                spawn_action_button(panel, &font.0, "القائمة الرئيسية", OverlayAction::MainMenu, false);
+                spawn_action_button(
+                    panel,
+                    &font.0,
+                    "القائمة الرئيسية",
+                    OverlayAction::MainMenu,
+                    false,
+                );
                 spawn_action_button(panel, &font.0, "خروج", OverlayAction::Quit, false);
             });
         });
@@ -366,8 +471,12 @@ pub fn handle_overlay_buttons(
                         next_state.set(AppState::Playing);
                     }
                     OverlayAction::ToggleMotion => prefs.reduced_motion = !prefs.reduced_motion,
-                    OverlayAction::VolumeDown => prefs.master_volume = (prefs.master_volume - 0.1).max(0.0),
-                    OverlayAction::VolumeUp => prefs.master_volume = (prefs.master_volume + 0.1).min(1.0),
+                    OverlayAction::VolumeDown => {
+                        prefs.master_volume = (prefs.master_volume - 0.1).max(0.0)
+                    }
+                    OverlayAction::VolumeUp => {
+                        prefs.master_volume = (prefs.master_volume + 0.1).min(1.0)
+                    }
                 }
                 if let Ok(mut text) = settings.single_mut() {
                     text.0 = settings_text(&prefs);
@@ -411,10 +520,19 @@ fn panel_node(width: f32) -> (Node, BackgroundColor, BorderColor) {
     )
 }
 
-fn spawn_title(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, label: &'static str, size: f32) {
+fn spawn_title(
+    parent: &mut ChildSpawnerCommands,
+    font: &Handle<Font>,
+    label: &'static str,
+    size: f32,
+) {
     parent.spawn((
         Text::new(label),
-        TextFont { font: font.clone(), font_size: size, ..default() },
+        TextFont {
+            font: font.clone(),
+            font_size: size,
+            ..default()
+        },
         TextColor(Color::srgb(0.68, 1.0, 0.92)),
         TextLayout::new_with_justify(Justify::Center),
     ));
@@ -451,7 +569,11 @@ fn spawn_action_button(
         .with_children(|button| {
             button.spawn((
                 Text::new(label),
-                TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                TextFont {
+                    font: font.clone(),
+                    font_size: 18.0,
+                    ..default()
+                },
                 TextColor(Color::WHITE),
                 TextLayout::new_with_justify(Justify::Center),
             ));
@@ -462,6 +584,10 @@ fn settings_text(prefs: &GamePreferences) -> String {
     format!(
         "الصوت: {:.0}%   |   تقليل الحركة: {}",
         prefs.master_volume * 100.0,
-        if prefs.reduced_motion { "مفعّل" } else { "متوقف" }
+        if prefs.reduced_motion {
+            "مفعّل"
+        } else {
+            "متوقف"
+        }
     )
 }

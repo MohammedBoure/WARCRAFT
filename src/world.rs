@@ -148,8 +148,8 @@ pub fn control_viewer_camera(
 
     if camera_state.shake > 0.001 && !preferences.reduced_motion {
         let t = time.elapsed_secs() * 37.0;
-        transform.translation += Vec3::new(t.sin(), (t * 1.7).cos(), (t * 0.7).sin())
-            * camera_state.shake;
+        transform.translation +=
+            Vec3::new(t.sin(), (t * 1.7).cos(), (t * 0.7).sin()) * camera_state.shake;
         camera_state.shake = (camera_state.shake - time.delta_secs() * 2.2).max(0.0);
     } else {
         camera_state.shake = 0.0;

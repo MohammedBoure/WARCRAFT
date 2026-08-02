@@ -58,9 +58,18 @@ pub fn play_ui_clicks(
     buttons: Query<&Interaction, (Changed<Interaction>, With<Button>)>,
     mut commands: Commands,
 ) {
-    let Some(audio) = audio else { return; };
-    if buttons.iter().any(|interaction| *interaction == Interaction::Pressed) {
-        play_one_shot(&mut commands, audio.click.clone(), preferences.master_volume * 0.65);
+    let Some(audio) = audio else {
+        return;
+    };
+    if buttons
+        .iter()
+        .any(|interaction| *interaction == Interaction::Pressed)
+    {
+        play_one_shot(
+            &mut commands,
+            audio.click.clone(),
+            preferences.master_volume * 0.65,
+        );
     }
 }
 
@@ -70,7 +79,9 @@ pub fn play_voxel_actions(
     mut events: MessageReader<VoxelActionSound>,
     mut commands: Commands,
 ) {
-    let Some(audio) = audio else { return; };
+    let Some(audio) = audio else {
+        return;
+    };
     for event in events.read() {
         let handle = match event {
             VoxelActionSound::Mine => audio.mine.clone(),
@@ -86,7 +97,9 @@ pub fn play_crystal_audio(
     mut events: MessageReader<CrystalCollected>,
     mut commands: Commands,
 ) {
-    let Some(audio) = audio else { return; };
+    let Some(audio) = audio else {
+        return;
+    };
     for event in events.read() {
         let volume = (preferences.master_volume * (0.76 + f32::from(event.0) * 0.03)).min(1.0);
         play_one_shot(&mut commands, audio.crystal.clone(), volume);
@@ -99,10 +112,20 @@ pub fn play_choice_audio(
     mut events: MessageReader<ChoiceCommitted>,
     mut commands: Commands,
 ) {
-    let Some(audio) = audio else { return; };
+    let Some(audio) = audio else {
+        return;
+    };
     for event in events.read() {
-        let urgency = if event.0 == CriticalChoice::Stabilize { 0.92 } else { 0.82 };
-        play_one_shot(&mut commands, audio.warning.clone(), preferences.master_volume * urgency);
+        let urgency = if event.0 == CriticalChoice::Stabilize {
+            0.92
+        } else {
+            0.82
+        };
+        play_one_shot(
+            &mut commands,
+            audio.warning.clone(),
+            preferences.master_volume * urgency,
+        );
     }
 }
 
@@ -112,9 +135,16 @@ pub fn play_collapse_audio(
     mut events: MessageReader<CollapseTriggered>,
     mut commands: Commands,
 ) {
-    let Some(audio) = audio else { return; };
-    for _ in events.read() {
-        play_one_shot(&mut commands, audio.collapse.clone(), preferences.master_volume * 0.95);
+    let Some(audio) = audio else {
+        return;
+    };
+    for event in events.read() {
+        let distance_mix = (event.0.length() / 800.0).clamp(0.0, 0.12);
+        play_one_shot(
+            &mut commands,
+            audio.collapse.clone(),
+            preferences.master_volume * (0.95 - distance_mix),
+        );
     }
 }
 
@@ -122,15 +152,23 @@ pub fn play_criticality_audio(
     audio: Option<Res<GameAudio>>,
     preferences: Res<GamePreferences>,
     mut risk_state: ResMut<AudioRiskState>,
-    session: Res<GameSession>,
+    mut events: MessageReader<CriticalityChanged>,
     mut commands: Commands,
 ) {
-    let Some(audio) = audio else { return; };
-    let band = session.risk_band();
-    if band != risk_state.0 {
-        risk_state.0 = band;
-        if matches!(band, RiskBand::Critical | RiskBand::Terminal) {
-            play_one_shot(&mut commands, audio.warning.clone(), preferences.master_volume * 0.85);
+    let Some(audio) = audio else {
+        return;
+    };
+    for event in events.read() {
+        let band = RiskBand::from_value(event.0);
+        if band != risk_state.0 {
+            risk_state.0 = band;
+            if matches!(band, RiskBand::Critical | RiskBand::Terminal) {
+                play_one_shot(
+                    &mut commands,
+                    audio.warning.clone(),
+                    preferences.master_volume * 0.85,
+                );
+            }
         }
     }
 }
@@ -141,7 +179,9 @@ pub fn play_finish_audio(
     mut events: MessageReader<RunFinished>,
     mut commands: Commands,
 ) {
-    let Some(audio) = audio else { return; };
+    let Some(audio) = audio else {
+        return;
+    };
     for event in events.read() {
         let handle = match event.0 {
             RunOutcome::PeopleSaved | RunOutcome::WorldSaved => audio.success.clone(),
@@ -158,7 +198,9 @@ pub fn update_ambient_audio(
     mut ambient_query: Query<&mut PlaybackSettings, With<AmbientLoop>>,
 ) {
     let _ = audio;
-    let Ok(mut settings) = ambient_query.get_single_mut() else { return; };
+    let Ok(mut settings) = ambient_query.single_mut() else {
+        return;
+    };
     let intensity = (session.criticality / 100.0).clamp(0.0, 1.0);
     settings.volume = Volume::Linear(preferences.master_volume * (0.18 + intensity * 0.16));
 }

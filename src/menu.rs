@@ -78,12 +78,10 @@ pub fn setup_loading_screen(
 
 pub fn finish_loading(
     time: Res<Time>,
-    loaded: Res<LoadedVoxelChunks>,
     mut timer: ResMut<LoadingTimer>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
-    timer.0.tick(time.delta());
-    if timer.0.is_finished() && loaded.chunks.len() >= 9 {
+    if timer.0.tick(time.delta()).just_finished() {
         next_state.set(AppState::MainMenu);
     }
 }

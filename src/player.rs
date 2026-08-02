@@ -125,8 +125,7 @@ pub fn spawn_player_character(
                     shadows_enabled: true,
                     ..default()
                 },
-                Transform::from_xyz(0.0, 2.2, -0.7)
-                    .looking_at(Vec3::new(0.0, 0.0, -8.0), Vec3::Y),
+                Transform::from_xyz(0.0, 2.2, -0.7).looking_at(Vec3::new(0.0, 0.0, -8.0), Vec3::Y),
             ));
         });
 }

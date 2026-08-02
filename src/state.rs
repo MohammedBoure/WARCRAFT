@@ -206,26 +206,6 @@ impl Default for GamePreferences {
     }
 }
 
-#[derive(Resource, Default)]
-pub struct MiddleClickResetTimer {
-    pub last_click_time: f32,
-}
-
-#[derive(Debug, Clone, Copy, Resource)]
-pub struct VoxelViewerWeatherState {
-    pub biome: VoxelBiome,
-    pub weather: VoxelWeather,
-}
-
-impl Default for VoxelViewerWeatherState {
-    fn default() -> Self {
-        Self {
-            biome: VoxelBiome::Plains,
-            weather: VoxelWeather::Clear,
-        }
-    }
-}
-
 #[derive(Resource, Clone)]
 pub struct ArabicFont(pub Handle<Font>);
 
@@ -247,10 +227,12 @@ pub struct ViewerOptions {
 
 impl Default for ViewerOptions {
     fn default() -> Self {
+        let mut composition = VoxelWorldComposition::preset("balanced").unwrap_or_default();
+        composition.resource_ratios.set_named("crystal", 0.0);
         Self {
             seed: GAME_SEED,
             load_radius: LOAD_RADIUS_DEFAULT,
-            composition: VoxelWorldComposition::preset("crystal").unwrap_or_default(),
+            composition,
             help: false,
             dev_world: false,
         }

@@ -37,7 +37,11 @@ pub fn setup_target_highlight(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh = meshes.add(Cuboid::new(BLOCK_SIZE * 1.04, HEIGHT_SCALE * 1.08, BLOCK_SIZE * 1.04));
+    let mesh = meshes.add(Cuboid::new(
+        BLOCK_SIZE * 1.04,
+        HEIGHT_SCALE * 1.08,
+        BLOCK_SIZE * 1.04,
+    ));
     let material = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 0.78, 0.16, 0.26),
         emissive: LinearRgba::rgb(2.2, 1.15, 0.12),
@@ -61,10 +65,7 @@ pub fn update_target_block_highlight(
     loaded: Res<LoadedVoxelChunks>,
     mut edits: ResMut<VoxelWorldEdits>,
     mining: Res<MiningState>,
-    mut highlight_query: Query<
-        (&mut Transform, &mut Visibility),
-        With<TargetBlockHighlightTag>,
-    >,
+    mut highlight_query: Query<(&mut Transform, &mut Visibility), With<TargetBlockHighlightTag>>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
         return;
@@ -80,7 +81,9 @@ pub fn update_target_block_highlight(
         camera
             .viewport_to_world(camera_transform, cursor)
             .ok()
-            .and_then(|ray| voxel_raycast_loaded(&loaded, ray.origin, *ray.direction, INTERACTION_DISTANCE))
+            .and_then(|ray| {
+                voxel_raycast_loaded(&loaded, ray.origin, *ray.direction, INTERACTION_DISTANCE)
+            })
     });
 
     if let Some(hit) = edits.targeted {
@@ -117,28 +120,29 @@ pub fn handle_voxel_digging_and_building(
         return;
     }
 
-    if mouse.just_pressed(MouseButton::Right) {
-        if let Some(hit) = edits.targeted {
-            if let Some(position) = hit.placement {
-                let player_occupies = player_query.single().is_ok_and(|player| {
-                    let player_block = world_to_block(player.translation);
-                    (player_block.x - position.x).abs() <= 1
-                        && (player_block.z - position.z).abs() <= 1
-                        && (player_block.y - position.y).abs() <= 2
-                });
-                if session.supports > 0
-                    && !player_occupies
-                    && loaded.block_at(position).is_none_or(|kind| !kind.is_solid())
-                {
-                    edits.edits.push(VoxelTerrainEdit::SetBlock {
-                        position,
-                        block: BlockKind::Stone,
-                    });
-                    session.supports -= 1;
-                    invalidate_edit(&mut commands, &mut loaded, position, 1);
-                    action_sounds.write(VoxelActionSound::Build);
-                }
-            }
+    if mouse.just_pressed(MouseButton::Right)
+        && let Some(hit) = edits.targeted
+        && let Some(position) = hit.placement
+    {
+        let player_occupies = player_query.single().is_ok_and(|player| {
+            let player_block = world_to_block(player.translation);
+            (player_block.x - position.x).abs() <= 1
+                && (player_block.z - position.z).abs() <= 1
+                && (player_block.y - position.y).abs() <= 2
+        });
+        if session.supports > 0
+            && !player_occupies
+            && loaded
+                .block_at(position)
+                .is_none_or(|kind| !kind.is_solid())
+        {
+            edits.edits.push(VoxelTerrainEdit::SetBlock {
+                position,
+                block: BlockKind::Stone,
+            });
+            session.supports -= 1;
+            invalidate_edit(&mut commands, &mut loaded, position, 1);
+            action_sounds.write(VoxelActionSound::Build);
         }
     }
 
@@ -153,7 +157,10 @@ pub fn handle_voxel_digging_and_building(
         mining.progress = 0.0;
         return;
     };
-    if matches!(hit.kind, BlockKind::Bedrock | BlockKind::Water | BlockKind::Lava) {
+    if matches!(
+        hit.kind,
+        BlockKind::Bedrock | BlockKind::Water | BlockKind::Lava
+    ) {
         mining.target = None;
         mining.progress = 0.0;
         return;
@@ -253,12 +260,9 @@ mod tests {
 
     #[test]
     fn zero_direction_never_hits() {
-        assert!(voxel_raycast_loaded(
-            &LoadedVoxelChunks::default(),
-            Vec3::ZERO,
-            Vec3::ZERO,
-            10.0
-        )
-        .is_none());
+        assert!(
+            voxel_raycast_loaded(&LoadedVoxelChunks::default(), Vec3::ZERO, Vec3::ZERO, 10.0)
+                .is_none()
+        );
     }
 }

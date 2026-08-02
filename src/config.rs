@@ -5,8 +5,10 @@ use crate::state::*;
 impl ViewerOptions {
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Self, String> {
         let tokens = args.into_iter().collect::<Vec<_>>();
-        let mut options = Self::default();
-        options.dev_world = tokens.iter().any(|arg| arg == "--dev-world");
+        let mut options = Self {
+            dev_world: tokens.iter().any(|arg| arg == "--dev-world"),
+            ..Self::default()
+        };
         let mut args = tokens.into_iter();
 
         while let Some(arg) = args.next() {
@@ -42,7 +44,7 @@ impl ViewerOptions {
     }
 
     pub const fn help_text() -> &'static str {
-        "نقطة الانهيار - لعبة عربية لموضوع Critical Point\n\nالاستخدام:\n  bevy_playground.exe [--help]\n  bevy_playground.exe --dev-world [خيارات]\n\nخيارات اللاعب:\n  --help              عرض هذه المساعدة والخروج\n\nخيارات المطور:\n  --dev-world         تفعيل خيارات اختبار العالم\n  --seed <u64>        بذرة العالم، عشرية أو 0xHEX\n  --radius <3..12>    نصف قطر تحميل المناطق\n  --preset <name>     balanced, lush, dry, frozen, volcanic, crystal, crater\n\nالتحكم:\n  WASD / الأسهم       الحركة\n  Shift               الركض\n  Space               القفز\n  زر الفأرة الأيسر    الحفر أو استخراج البلور\n  زر الفأرة الأيمن    وضع كتلة دعم\n  E                   التفاعل\n  Esc                 إيقاف مؤقت\n"
+        "نقطة الانهيار - لعبة عربية لموضوع Critical Point\n\nالاستخدام:\n  critical_point.exe [--help]\n  critical_point.exe --dev-world [خيارات]\n\nخيارات اللاعب:\n  --help              عرض هذه المساعدة والخروج\n\nخيارات المطور:\n  --dev-world         تفعيل خيارات اختبار العالم\n  --seed <u64>        بذرة العالم، عشرية أو 0xHEX\n  --radius <3..12>    نصف قطر تحميل المناطق\n  --preset <name>     balanced, lush, dry, frozen, volcanic, crystal, crater\n\nالتحكم:\n  WASD / الأسهم       الحركة\n  Shift               الركض\n  Space               القفز\n  زر الفأرة الأيسر    الحفر أو استخراج البلور\n  زر الفأرة الأيمن    وضع كتلة دعم\n  E                   التفاعل\n  Esc                 إيقاف مؤقت\n"
     }
 }
 

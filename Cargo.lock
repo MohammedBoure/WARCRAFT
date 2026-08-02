@@ -1151,14 +1151,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy_playground"
-version = "0.1.0"
-dependencies = [
- "astra_voxel_world",
- "bevy",
-]
-
-[[package]]
 name = "bevy_post_process"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2115,6 +2107,14 @@ name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
+name = "critical_point"
+version = "0.1.0"
+dependencies = [
+ "astra_voxel_world",
+ "bevy",
+]
 
 [[package]]
 name = "crossbeam-channel"
