@@ -1,0 +1,13 @@
+[package]
+name = "astra_voxel_world"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Deterministic voxel terrain generation vendored for Critical Point"
+
+[dependencies]
+bevy = "0.18.1"
+
+[lib]
+path = "src/lib.rs"

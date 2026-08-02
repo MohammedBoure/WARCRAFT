@@ -214,53 +214,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "astra_camera"
-version = "0.1.0"
-dependencies = [
- "bevy",
-]
-
-[[package]]
-name = "astra_core"
-version = "0.1.0"
-dependencies = [
- "bevy_app",
- "bevy_ecs",
-]
-
-[[package]]
-name = "astra_data"
-version = "0.1.0"
-dependencies = [
- "astra_core",
-]
-
-[[package]]
-name = "astra_planet"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "astra_procgen"
-version = "0.1.0"
-dependencies = [
- "astra_core",
- "astra_data",
- "bevy",
-]
-
-[[package]]
-name = "astra_render"
-version = "0.1.0"
-dependencies = [
- "astra_core",
- "astra_procgen",
- "bevy",
-]
-
-[[package]]
 name = "astra_voxel_world"
 version = "0.1.0"
 dependencies = [
@@ -1201,9 +1154,6 @@ dependencies = [
 name = "bevy_playground"
 version = "0.1.0"
 dependencies = [
- "astra_camera",
- "astra_planet",
- "astra_render",
  "astra_voxel_world",
  "bevy",
 ]
