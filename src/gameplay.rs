@@ -70,28 +70,28 @@ pub fn setup_gameplay_assets(
     let warning_mesh = meshes.add(Cylinder::new(10.0, 0.16));
     let crystal_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.38, 0.96, 0.88),
-        emissive: LinearRgba::rgb(4.0, 10.0, 8.0),
+        emissive: LinearRgba::rgb(1.2, 3.0, 2.4),
         metallic: 0.35,
         perceptual_roughness: 0.18,
         ..default()
     });
     let beacon_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.12, 0.72, 0.92),
-        emissive: LinearRgba::rgb(1.0, 4.5, 6.5),
+        emissive: LinearRgba::rgb(0.35, 1.6, 2.2),
         metallic: 0.5,
         perceptual_roughness: 0.28,
         ..default()
     });
     let core_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.82, 0.12, 0.38),
-        emissive: LinearRgba::rgb(8.0, 0.35, 1.4),
+        emissive: LinearRgba::rgb(3.0, 0.12, 0.55),
         metallic: 0.18,
         perceptual_roughness: 0.16,
         ..default()
     });
     let warning_material = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 0.08, 0.04, 0.38),
-        emissive: LinearRgba::rgb(8.0, 0.05, 0.02),
+        emissive: LinearRgba::rgb(2.4, 0.02, 0.01),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         ..default()

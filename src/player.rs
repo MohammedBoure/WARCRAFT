@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use astra_voxel_world::prelude::*;
 use bevy::prelude::*;
 
@@ -12,10 +14,25 @@ const JUMP_SPEED: f32 = 10.0;
 #[derive(Component)]
 pub struct PlayerTag;
 
-#[derive(Component)]
-pub struct PlayerLimb {
-    phase: f32,
+const WARDEN_MODEL: &str = "models/kenney-blocky/warden.glb";
+
+#[derive(Resource)]
+pub struct WardenAnimations {
+    idle: AnimationNodeIndex,
+    walk: AnimationNodeIndex,
+    sprint: AnimationNodeIndex,
+    graph: Handle<AnimationGraph>,
 }
+
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum WardenAnimationMode {
+    Idle,
+    Walk,
+    Sprint,
+}
+
+#[derive(Component)]
+pub struct WardenLamp;
 
 #[derive(Resource, Debug)]
 pub struct PlayerState {
@@ -42,41 +59,31 @@ impl Default for PlayerState {
 
 pub fn spawn_player_character(
     world: Res<VoxelViewerWorld>,
+    asset_server: Res<AssetServer>,
+    mut animation_graphs: ResMut<Assets<AnimationGraph>>,
     mut session: ResMut<GameSession>,
     mut player_state: ResMut<PlayerState>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let surface = sample_voxel_column(world.settings, 0, 0).height as f32 * HEIGHT_SCALE;
-    let spawn = Vec3::new(0.0, surface + PLAYER_HALF_HEIGHT, 0.0);
+    let spawn = Vec3::new(
+        BLOCK_SIZE * 0.5,
+        surface + PLAYER_HALF_HEIGHT,
+        BLOCK_SIZE * 0.5,
+    );
     session.safe_position = spawn;
     player_state.current_y = spawn.y;
 
-    let body_mesh = meshes.add(Cuboid::new(2.4, 2.8, 1.7));
-    let head_mesh = meshes.add(Cuboid::new(2.0, 1.65, 1.85));
-    let limb_mesh = meshes.add(Cuboid::new(0.62, 2.1, 0.62));
-    let pack_mesh = meshes.add(Cuboid::new(1.65, 2.0, 0.72));
-    let visor_mesh = meshes.add(Cuboid::new(1.48, 0.55, 0.22));
-
-    let suit = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.10, 0.62, 0.82),
-        metallic: 0.22,
-        perceptual_roughness: 0.42,
-        ..default()
-    });
-    let dark = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.035, 0.09, 0.14),
-        metallic: 0.45,
-        perceptual_roughness: 0.30,
-        ..default()
-    });
-    let glow = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.68, 1.0, 0.94),
-        emissive: LinearRgba::rgb(3.8, 7.0, 6.2),
-        metallic: 0.15,
-        perceptual_roughness: 0.2,
-        ..default()
+    let (graph, nodes) = AnimationGraph::from_clips([
+        asset_server.load(GltfAssetLabel::Animation(1).from_asset(WARDEN_MODEL)),
+        asset_server.load(GltfAssetLabel::Animation(2).from_asset(WARDEN_MODEL)),
+        asset_server.load(GltfAssetLabel::Animation(3).from_asset(WARDEN_MODEL)),
+    ]);
+    commands.insert_resource(WardenAnimations {
+        idle: nodes[0],
+        walk: nodes[1],
+        sprint: nodes[2],
+        graph: animation_graphs.add(graph),
     });
 
     commands
@@ -88,48 +95,82 @@ pub fn spawn_player_character(
         ))
         .with_children(|parent| {
             parent.spawn((
-                Mesh3d(body_mesh),
-                MeshMaterial3d(suit.clone()),
-                Transform::from_xyz(0.0, 0.0, 0.0),
+                Name::new("Kenney Blocky Warden"),
+                SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(WARDEN_MODEL))),
+                Transform {
+                    translation: Vec3::new(0.0, -PLAYER_HALF_HEIGHT, 0.0),
+                    rotation: Quat::from_rotation_y(std::f32::consts::PI),
+                    scale: Vec3::splat(2.15),
+                },
             ));
             parent.spawn((
-                Mesh3d(head_mesh),
-                MeshMaterial3d(dark.clone()),
-                Transform::from_xyz(0.0, 2.05, 0.0),
-            ));
-            parent.spawn((
-                Mesh3d(visor_mesh),
-                MeshMaterial3d(glow),
-                Transform::from_xyz(0.0, 2.12, -1.0),
-            ));
-            parent.spawn((
-                Mesh3d(pack_mesh),
-                MeshMaterial3d(dark),
-                Transform::from_xyz(0.0, 0.15, 1.05),
-            ));
-            for (x, phase) in [(-1.48, 0.0), (1.48, std::f32::consts::PI)] {
-                parent.spawn((
-                    Mesh3d(limb_mesh.clone()),
-                    MeshMaterial3d(suit.clone()),
-                    Transform::from_xyz(x, -0.25, 0.0),
-                    PlayerLimb { phase },
-                ));
-            }
-            parent.spawn((
+                Name::new("Stability Lamp"),
                 SpotLight {
-                    color: Color::srgb(0.62, 0.95, 1.0),
-                    intensity: 650_000.0,
-                    range: 42.0,
-                    inner_angle: 0.22,
-                    outer_angle: 0.72,
-                    shadows_enabled: true,
+                    color: Color::srgb(0.32, 0.82, 0.92),
+                    intensity: 32_000.0,
+                    range: 34.0,
+                    inner_angle: 0.20,
+                    outer_angle: 0.62,
+                    shadows_enabled: false,
                     ..default()
                 },
-                Transform::from_xyz(0.0, 2.2, -0.7).looking_at(Vec3::new(0.0, 0.0, -8.0), Vec3::Y),
+                Transform::from_xyz(0.0, 1.55, -0.65)
+                    .looking_at(Vec3::new(0.0, -0.5, -10.0), Vec3::Y),
+                WardenLamp,
             ));
         });
 }
 
+pub fn setup_warden_animation(
+    mut commands: Commands,
+    animations: Res<WardenAnimations>,
+    mut players: Query<(Entity, &mut AnimationPlayer), Added<AnimationPlayer>>,
+) {
+    for (entity, mut player) in &mut players {
+        let mut transitions = AnimationTransitions::new();
+        transitions
+            .play(&mut player, animations.idle, Duration::ZERO)
+            .repeat();
+        commands.entity(entity).insert((
+            AnimationGraphHandle(animations.graph.clone()),
+            transitions,
+            WardenAnimationMode::Idle,
+        ));
+    }
+}
+
+pub fn update_warden_animation(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    player_state: Res<PlayerState>,
+    animations: Res<WardenAnimations>,
+    mut players: Query<(
+        &mut AnimationPlayer,
+        &mut AnimationTransitions,
+        &mut WardenAnimationMode,
+    )>,
+) {
+    let desired = if !player_state.moving {
+        WardenAnimationMode::Idle
+    } else if keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+        WardenAnimationMode::Sprint
+    } else {
+        WardenAnimationMode::Walk
+    };
+    let node = match desired {
+        WardenAnimationMode::Idle => animations.idle,
+        WardenAnimationMode::Walk => animations.walk,
+        WardenAnimationMode::Sprint => animations.sprint,
+    };
+    for (mut player, mut transitions, mut mode) in &mut players {
+        if *mode == desired {
+            continue;
+        }
+        transitions
+            .play(&mut player, node, Duration::from_millis(160))
+            .repeat();
+        *mode = desired;
+    }
+}
 pub fn reset_player_for_run(
     lifecycle: Res<RunLifecycle>,
     world: Res<VoxelViewerWorld>,
@@ -144,7 +185,11 @@ pub fn reset_player_for_run(
         return;
     };
     let surface = sample_voxel_column(world.settings, 0, 0).height as f32 * HEIGHT_SCALE;
-    let spawn = Vec3::new(0.0, surface + PLAYER_HALF_HEIGHT, 0.0);
+    let spawn = Vec3::new(
+        BLOCK_SIZE * 0.5,
+        surface + PLAYER_HALF_HEIGHT,
+        BLOCK_SIZE * 0.5,
+    );
     transform.translation = spawn;
     transform.rotation = Quat::IDENTITY;
     *visibility = Visibility::Visible;
@@ -214,8 +259,8 @@ pub fn update_player_movement(
     if player_state.moving {
         let direction = movement.normalize();
         let candidate = transform.translation + direction * speed * time.delta_secs();
-        let world_x = (candidate.x / BLOCK_SIZE).round() as i64;
-        let world_z = (candidate.z / BLOCK_SIZE).round() as i64;
+        let world_x = (candidate.x / BLOCK_SIZE).floor() as i64;
+        let world_z = (candidate.z / BLOCK_SIZE).floor() as i64;
         let max_y = ((current_foot + PLAYER_STEP_HEIGHT) / HEIGHT_SCALE).ceil() as i32;
         let ground = ground_world_y(&loaded, &world, world_x, world_z, max_y);
         if ground - current_foot <= PLAYER_STEP_HEIGHT {
@@ -228,8 +273,8 @@ pub fn update_player_movement(
         }
     }
 
-    let foot_x = (next.x / BLOCK_SIZE).round() as i64;
-    let foot_z = (next.z / BLOCK_SIZE).round() as i64;
+    let foot_x = (next.x / BLOCK_SIZE).floor() as i64;
+    let foot_z = (next.z / BLOCK_SIZE).floor() as i64;
     let scan_y = ((next.y - PLAYER_HALF_HEIGHT + PLAYER_STEP_HEIGHT) / HEIGHT_SCALE).ceil() as i32;
     let ground = ground_world_y(&loaded, &world, foot_x, foot_z, scan_y);
     let foot = next.y - PLAYER_HALF_HEIGHT;
@@ -270,17 +315,20 @@ pub fn update_player_movement(
 }
 
 pub fn animate_player(
-    time: Res<Time>,
-    state: Res<PlayerState>,
-    mut limbs: Query<(&PlayerLimb, &mut Transform)>,
+    session: Res<GameSession>,
+    mut lamps: Query<&mut SpotLight, With<WardenLamp>>,
 ) {
-    let amount = if state.moving { 0.55 } else { 0.06 };
-    for (limb, mut transform) in &mut limbs {
-        let swing = (time.elapsed_secs() * 8.0 + limb.phase).sin() * amount;
-        transform.rotation = Quat::from_rotation_x(swing);
+    let (color, intensity) = match session.risk_band() {
+        RiskBand::Calm => (Color::srgb(0.32, 0.82, 0.92), 32_000.0),
+        RiskBand::Warning => (Color::srgb(0.95, 0.56, 0.16), 36_000.0),
+        RiskBand::Critical => (Color::srgb(0.86, 0.18, 0.25), 40_000.0),
+        RiskBand::Terminal => (Color::srgb(1.0, 0.05, 0.08), 44_000.0),
+    };
+    for mut lamp in &mut lamps {
+        lamp.color = color;
+        lamp.intensity = intensity;
     }
 }
-
 fn ground_world_y(
     loaded: &LoadedVoxelChunks,
     world: &VoxelViewerWorld,

@@ -26,3 +26,10 @@ A local copy is included under crates/astra_voxel_world.
 
 License: MIT.
 Full license: crates/astra_voxel_world/LICENSE.
+## Kenney Blocky Characters
+
+- Source: https://kenney.nl/assets/blocky-characters
+- Included files: assets/models/kenney-blocky/warden.glb and Textures/texture-a.png
+- Original file: Models/GLB format/character-a.glb
+- License: Creative Commons CC0 1.0 Universal
+- Included license notice: assets/models/kenney-blocky/LICENSE.txt

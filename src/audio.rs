@@ -1,4 +1,4 @@
-use bevy::audio::Volume;
+use bevy::audio::{SpatialScale, Volume};
 use bevy::prelude::*;
 
 use crate::state::*;
@@ -77,6 +77,7 @@ pub fn play_voxel_actions(
     audio: Option<Res<GameAudio>>,
     preferences: Res<GamePreferences>,
     mut events: MessageReader<VoxelActionSound>,
+    mut variation: Local<u32>,
     mut commands: Commands,
 ) {
     let Some(audio) = audio else {
@@ -87,7 +88,17 @@ pub fn play_voxel_actions(
             VoxelActionSound::Mine => audio.mine.clone(),
             VoxelActionSound::Build => audio.build.clone(),
         };
-        play_one_shot(&mut commands, handle, preferences.master_volume * 0.72);
+        let speed = match event {
+            VoxelActionSound::Mine => 0.94 + (*variation % 5) as f32 * 0.025,
+            VoxelActionSound::Build => 0.97 + (*variation % 3) as f32 * 0.025,
+        };
+        *variation = variation.wrapping_add(1);
+        play_one_shot_varied(
+            &mut commands,
+            handle,
+            preferences.master_volume * 0.68,
+            speed,
+        );
     }
 }
 
@@ -140,10 +151,11 @@ pub fn play_collapse_audio(
     };
     for event in events.read() {
         let distance_mix = (event.0.length() / 800.0).clamp(0.0, 0.12);
-        play_one_shot(
+        play_spatial_one_shot(
             &mut commands,
             audio.collapse.clone(),
-            preferences.master_volume * (0.95 - distance_mix),
+            preferences.master_volume * (0.88 - distance_mix),
+            event.0,
         );
     }
 }
@@ -192,22 +204,48 @@ pub fn play_finish_audio(
 }
 
 pub fn update_ambient_audio(
-    audio: Option<Res<GameAudio>>,
     preferences: Res<GamePreferences>,
     session: Res<GameSession>,
     mut ambient_query: Query<&mut PlaybackSettings, With<AmbientLoop>>,
 ) {
-    let _ = audio;
     let Ok(mut settings) = ambient_query.single_mut() else {
         return;
     };
     let intensity = (session.criticality / 100.0).clamp(0.0, 1.0);
-    settings.volume = Volume::Linear(preferences.master_volume * (0.18 + intensity * 0.16));
+    settings.volume = Volume::Linear(preferences.master_volume * (0.12 + intensity * 0.14));
+    settings.speed = 0.92 + intensity * 0.16;
 }
 
 fn play_one_shot(commands: &mut Commands, source: Handle<AudioSource>, volume: f32) {
+    play_one_shot_varied(commands, source, volume, 1.0);
+}
+
+fn play_one_shot_varied(
+    commands: &mut Commands,
+    source: Handle<AudioSource>,
+    volume: f32,
+    speed: f32,
+) {
     commands.spawn((
         AudioPlayer::new(source),
-        PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume.clamp(0.0, 1.0))),
+        PlaybackSettings::DESPAWN
+            .with_volume(Volume::Linear(volume.clamp(0.0, 1.0)))
+            .with_speed(speed.clamp(0.75, 1.25)),
+    ));
+}
+
+fn play_spatial_one_shot(
+    commands: &mut Commands,
+    source: Handle<AudioSource>,
+    volume: f32,
+    position: Vec3,
+) {
+    commands.spawn((
+        AudioPlayer::new(source),
+        PlaybackSettings::DESPAWN
+            .with_volume(Volume::Linear(volume.clamp(0.0, 1.0)))
+            .with_spatial(true)
+            .with_spatial_scale(SpatialScale::new(0.065)),
+        Transform::from_translation(position),
     ));
 }

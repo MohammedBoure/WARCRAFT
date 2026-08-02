@@ -2,9 +2,16 @@ use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
 use astra_voxel_world::prelude::*;
-use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
-use bevy::post_process::bloom::Bloom;
-use bevy::prelude::*;
+use bevy::{
+    anti_alias::smaa::Smaa,
+    core_pipeline::tonemapping::Tonemapping,
+    input::mouse::{MouseScrollUnit, MouseWheel},
+    light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap},
+    pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel},
+    post_process::bloom::Bloom,
+    prelude::*,
+    render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection, Hdr},
+};
 
 use crate::interaction::VoxelWorldEdits;
 use crate::player::PlayerTag;
@@ -15,6 +22,8 @@ pub fn setup_viewer_scene(
     camera_state: Res<VoxelViewerCamera>,
     mut commands: Commands,
 ) {
+    commands.insert_resource(DirectionalLightShadowMap { size: 4096 });
+
     let surface = sample_voxel_column(world.settings, 0, 0).height as f32 * HEIGHT_SCALE;
     let mut camera_transform = Transform::default();
     apply_viewer_camera_transform(&camera_state, &mut camera_transform, surface + 3.0);
@@ -22,28 +31,48 @@ pub fn setup_viewer_scene(
     commands.spawn((
         Name::new("Critical Point Camera"),
         Camera3d::default(),
+        SpatialListener::new(1.0),
         Projection::Perspective(PerspectiveProjection {
-            fov: 48.0_f32.to_radians(),
+            fov: 46.0_f32.to_radians(),
             near: 0.1,
             far: 6_000.0,
             ..default()
         }),
+        Hdr,
+        Msaa::Off,
+        Smaa::default(),
+        Tonemapping::AgX,
+        ColorGrading::with_identical_sections(
+            ColorGradingGlobal {
+                exposure: -0.62,
+                post_saturation: 1.06,
+                ..default()
+            },
+            ColorGradingSection {
+                saturation: 1.04,
+                ..default()
+            },
+        ),
+        ScreenSpaceAmbientOcclusion {
+            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
+            ..default()
+        },
         Bloom {
-            intensity: 0.18,
+            intensity: 0.055,
             ..Bloom::NATURAL
         },
         DistanceFog {
-            color: Color::srgba(0.28, 0.58, 0.70, 1.0),
-            directional_light_color: Color::srgb(1.0, 0.82, 0.48),
-            directional_light_exponent: 18.0,
+            color: Color::srgba(0.08, 0.16, 0.19, 1.0),
+            directional_light_color: Color::srgb(0.72, 0.48, 0.24),
+            directional_light_exponent: 12.0,
             falloff: FogFalloff::Linear {
-                start: 180.0,
-                end: 620.0,
+                start: 125.0,
+                end: 540.0,
             },
         },
         AmbientLight {
-            color: Color::srgb(0.58, 0.72, 0.78),
-            brightness: 780.0,
+            color: Color::srgb(0.24, 0.36, 0.40),
+            brightness: 260.0,
             ..default()
         },
         camera_transform,
@@ -53,12 +82,20 @@ pub fn setup_viewer_scene(
     commands.spawn((
         Name::new("Critical Point Sun"),
         DirectionalLight {
-            color: Color::srgb(1.0, 0.88, 0.58),
-            illuminance: 28_000.0,
+            color: Color::srgb(1.0, 0.78, 0.50),
+            illuminance: 14_000.0,
             shadows_enabled: true,
+            shadow_depth_bias: 0.018,
+            shadow_normal_bias: 0.65,
             ..default()
         },
         Transform::from_xyz(-180.0, 320.0, 140.0).looking_at(Vec3::ZERO, Vec3::Y),
+        CascadeShadowConfigBuilder {
+            first_cascade_far_bound: 70.0,
+            maximum_distance: 380.0,
+            ..default()
+        }
+        .build(),
         VoxelViewerSunTag,
     ));
 
@@ -76,7 +113,6 @@ pub fn setup_viewer_scene(
         VoxelViewerWeatherOverlay,
     ));
 }
-
 pub fn control_viewer_camera(
     app_state: Res<State<AppState>>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -181,53 +217,66 @@ pub fn update_world_mood(
     mut sun_query: Query<&mut DirectionalLight, With<VoxelViewerSunTag>>,
     mut overlay_query: Query<&mut BackgroundColor, With<VoxelViewerWeatherOverlay>>,
 ) {
-    let (sky, ambient, brightness, sun_color, sun_lux, fog, overlay) = match session.risk_band() {
-        RiskBand::Calm => (
-            Color::srgb(0.24, 0.58, 0.72),
-            Color::srgb(0.56, 0.74, 0.78),
-            780.0,
-            Color::srgb(1.0, 0.88, 0.58),
-            28_000.0,
-            Color::srgb(0.28, 0.58, 0.70),
-            Color::NONE,
-        ),
-        RiskBand::Warning => (
-            Color::srgb(0.50, 0.43, 0.29),
-            Color::srgb(0.72, 0.58, 0.38),
-            650.0,
-            Color::srgb(1.0, 0.63, 0.28),
-            22_000.0,
-            Color::srgb(0.48, 0.34, 0.24),
-            Color::srgba(0.68, 0.34, 0.08, 0.035),
-        ),
-        RiskBand::Critical => (
-            Color::srgb(0.25, 0.16, 0.34),
-            Color::srgb(0.48, 0.34, 0.58),
-            520.0,
-            Color::srgb(1.0, 0.34, 0.24),
-            16_000.0,
-            Color::srgb(0.28, 0.16, 0.34),
-            Color::srgba(0.46, 0.04, 0.12, 0.085),
-        ),
-        RiskBand::Terminal => {
-            let pulse = (time.elapsed_secs() * 5.0).sin() * 0.5 + 0.5;
-            (
-                Color::srgb(0.12 + pulse * 0.08, 0.04, 0.08),
-                Color::srgb(0.42, 0.16, 0.22),
-                430.0,
-                Color::srgb(1.0, 0.16 + pulse * 0.18, 0.10),
-                12_000.0,
-                Color::srgb(0.18, 0.04, 0.08),
-                Color::srgba(0.72, 0.0, 0.08, 0.10 + pulse * 0.08),
-            )
-        }
-    };
+    let (sky, ambient, brightness, sun_color, sun_lux, fog, fog_start, fog_end, overlay) =
+        match session.risk_band() {
+            RiskBand::Calm => (
+                Color::srgb(0.055, 0.13, 0.17),
+                Color::srgb(0.24, 0.36, 0.40),
+                260.0,
+                Color::srgb(1.0, 0.78, 0.50),
+                14_000.0,
+                Color::srgb(0.08, 0.16, 0.19),
+                125.0,
+                540.0,
+                Color::NONE,
+            ),
+            RiskBand::Warning => (
+                Color::srgb(0.16, 0.105, 0.075),
+                Color::srgb(0.38, 0.27, 0.17),
+                220.0,
+                Color::srgb(1.0, 0.52, 0.20),
+                11_000.0,
+                Color::srgb(0.20, 0.12, 0.075),
+                110.0,
+                470.0,
+                Color::srgba(0.55, 0.20, 0.04, 0.018),
+            ),
+            RiskBand::Critical => (
+                Color::srgb(0.085, 0.045, 0.14),
+                Color::srgb(0.23, 0.14, 0.31),
+                170.0,
+                Color::srgb(1.0, 0.25, 0.17),
+                8_000.0,
+                Color::srgb(0.115, 0.055, 0.15),
+                95.0,
+                410.0,
+                Color::srgba(0.38, 0.015, 0.09, 0.05),
+            ),
+            RiskBand::Terminal => {
+                let pulse = (time.elapsed_secs() * 5.0).sin() * 0.5 + 0.5;
+                (
+                    Color::srgb(0.035 + pulse * 0.025, 0.012, 0.03),
+                    Color::srgb(0.20, 0.055, 0.085),
+                    125.0,
+                    Color::srgb(1.0, 0.08 + pulse * 0.10, 0.055),
+                    6_000.0,
+                    Color::srgb(0.075, 0.018, 0.045),
+                    80.0,
+                    350.0,
+                    Color::srgba(0.56, 0.0, 0.055, 0.07 + pulse * 0.055),
+                )
+            }
+        };
 
     clear_color.0 = sky;
     if let Ok((mut ambient_light, mut distance_fog)) = camera_query.single_mut() {
         ambient_light.color = ambient;
         ambient_light.brightness = brightness;
         distance_fog.color = fog;
+        distance_fog.falloff = FogFalloff::Linear {
+            start: fog_start,
+            end: fog_end,
+        };
     }
     if let Ok(mut sun) = sun_query.single_mut() {
         sun.color = sun_color;
@@ -237,7 +286,6 @@ pub fn update_world_mood(
         color.0 = overlay;
     }
 }
-
 pub fn sync_visible_chunks(
     world: Res<VoxelViewerWorld>,
     camera: Res<VoxelViewerCamera>,
@@ -391,9 +439,10 @@ fn shared_terrain_material(
         .terrain_material
         .get_or_insert_with(|| {
             materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                perceptual_roughness: 0.82,
-                metallic: 0.03,
+                base_color: Color::srgb(0.82, 0.86, 0.84),
+                perceptual_roughness: 0.90,
+                metallic: 0.0,
+                reflectance: 0.18,
                 ..default()
             })
         })

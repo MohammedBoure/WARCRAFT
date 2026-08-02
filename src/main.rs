@@ -141,6 +141,8 @@ fn main() {
                 control_viewer_camera,
                 update_world_mood,
                 update_landmarks,
+                setup_warden_animation,
+                update_warden_animation,
                 animate_player,
                 sync_player_visibility,
                 update_hud,
