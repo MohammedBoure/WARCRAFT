@@ -12,8 +12,10 @@ use crate::ui::*;
 pub fn setup_viewer_scene(
     world: Res<VoxelViewerWorld>,
     camera_state: Res<VoxelViewerCamera>,
+    asset_server: Res<AssetServer>,
     mut commands: Commands,
 ) {
+    let font_handle: Handle<Font> = asset_server.load("fonts/arabic.ttf");
     let mut camera_transform = Transform::default();
     apply_viewer_camera_transform(world.settings, &camera_state, &mut camera_transform, 75.0);
 
@@ -87,16 +89,17 @@ pub fn setup_viewer_scene(
             panel.spawn((
                 Text::new(""),
                 TextFont {
+                    font: font_handle.clone(),
                     font_size: 14.0,
                     ..default()
                 },
                 TextColor(Color::srgb(0.82, 0.93, 0.95)),
                 VoxelViewerHudText,
             ));
-            spawn_generation_dialog_button(panel, VoxelGenerationDialogAction::Open, "INPUTS");
+            spawn_generation_dialog_button(panel, VoxelGenerationDialogAction::Open, "INPUTS", font_handle.clone());
         });
 
-    spawn_generation_dialog(&mut commands);
+    spawn_generation_dialog(&mut commands, font_handle);
 }
 
 pub fn control_viewer_camera(

@@ -14,7 +14,12 @@ pub struct PresetOptionButton {
 #[derive(Component)]
 pub struct StartGameButton;
 
-pub fn setup_main_menu_ui(mut commands: Commands) {
+pub fn setup_main_menu_ui(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+) {
+    let font_handle: Handle<Font> = asset_server.load("fonts/arabic.ttf");
+
     commands
         .spawn((
             Name::new("Joyful Main Menu"),
@@ -52,6 +57,7 @@ pub fn setup_main_menu_ui(mut commands: Commands) {
                 panel.spawn((
                     Text::new("🌟 حديقة الفوكسل السحرية 🌟"),
                     TextFont {
+                        font: font_handle.clone(),
                         font_size: 28.0,
                         ..default()
                     },
@@ -61,6 +67,7 @@ pub fn setup_main_menu_ui(mut commands: Commands) {
                 panel.spawn((
                     Text::new("اختر نوع العالم والبيئة قبل بداية المغامرة:"),
                     TextFont {
+                        font: font_handle.clone(),
                         font_size: 16.0,
                         ..default()
                     },
@@ -78,10 +85,10 @@ pub fn setup_main_menu_ui(mut commands: Commands) {
                         ..default()
                     })
                     .with_children(|grid| {
-                        spawn_preset_button(grid, "balanced", "🌿 حديقة خضراء متوازنة");
-                        spawn_preset_button(grid, "crystal", "💎 عالم البلور السحري");
-                        spawn_preset_button(grid, "volcanic", "🌋 جبال وصخور بركانية");
-                        spawn_preset_button(grid, "frozen", "❄️ عالم الجليد والثلج");
+                        spawn_preset_button(grid, font_handle.clone(), "balanced", "🌿 حديقة خضراء متوازنة");
+                        spawn_preset_button(grid, font_handle.clone(), "crystal", "💎 عالم البلور السحري");
+                        spawn_preset_button(grid, font_handle.clone(), "volcanic", "🌋 جبال وصخور بركانية");
+                        spawn_preset_button(grid, font_handle.clone(), "frozen", "❄️ عالم الجليد والثلج");
                     });
 
                 // زر بدء اللعبة المبهج
@@ -104,6 +111,7 @@ pub fn setup_main_menu_ui(mut commands: Commands) {
                         btn.spawn((
                             Text::new("🚀 ابدأ المغامرة الآن"),
                             TextFont {
+                                font: font_handle.clone(),
                                 font_size: 22.0,
                                 ..default()
                             },
@@ -114,7 +122,12 @@ pub fn setup_main_menu_ui(mut commands: Commands) {
         });
 }
 
-fn spawn_preset_button(parent: &mut ChildSpawnerCommands, preset: &'static str, label: &'static str) {
+fn spawn_preset_button(
+    parent: &mut ChildSpawnerCommands,
+    font: Handle<Font>,
+    preset: &'static str,
+    label: &'static str,
+) {
     parent
         .spawn((
             Button,
@@ -135,6 +148,7 @@ fn spawn_preset_button(parent: &mut ChildSpawnerCommands, preset: &'static str, 
             btn.spawn((
                 Text::new(label),
                 TextFont {
+                    font,
                     font_size: 15.0,
                     ..default()
                 },

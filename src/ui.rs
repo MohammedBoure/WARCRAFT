@@ -8,6 +8,7 @@ pub fn spawn_generation_dialog_button(
     parent: &mut ChildSpawnerCommands,
     action: VoxelGenerationDialogAction,
     label: &'static str,
+    font: Handle<Font>,
 ) {
     parent
         .spawn((
@@ -30,6 +31,7 @@ pub fn spawn_generation_dialog_button(
             button.spawn((
                 Text::new(label),
                 TextFont {
+                    font,
                     font_size: 13.0,
                     ..default()
                 },
@@ -38,7 +40,7 @@ pub fn spawn_generation_dialog_button(
         });
 }
 
-pub fn spawn_generation_dialog(commands: &mut Commands) {
+pub fn spawn_generation_dialog(commands: &mut Commands, font: Handle<Font>) {
     commands
         .spawn((
             Name::new("Voxel Generation Input Dialog"),
@@ -76,6 +78,7 @@ pub fn spawn_generation_dialog(commands: &mut Commands) {
                 panel.spawn((
                     Text::new("إعدادات العالم الفوكسلي"),
                     TextFont {
+                        font: font.clone(),
                         font_size: 18.0,
                         ..default()
                     },
@@ -86,6 +89,7 @@ pub fn spawn_generation_dialog(commands: &mut Commands) {
                         "قم بتعديل قيم التوليد البرمجي ثم اضغط تطبيق (Apply). اضغط Esc للإلغاء.",
                     ),
                     TextFont {
+                        font: font.clone(),
                         font_size: 13.0,
                         ..default()
                     },
@@ -109,6 +113,7 @@ pub fn spawn_generation_dialog(commands: &mut Commands) {
                         input.spawn((
                             Text::new(""),
                             TextFont {
+                                font: font.clone(),
                                 font_size: 12.0,
                                 ..default()
                             },
@@ -119,6 +124,7 @@ pub fn spawn_generation_dialog(commands: &mut Commands) {
                 panel.spawn((
                     Text::new(""),
                     TextFont {
+                        font: font.clone(),
                         font_size: 13.0,
                         ..default()
                     },
@@ -136,11 +142,13 @@ pub fn spawn_generation_dialog(commands: &mut Commands) {
                             row,
                             VoxelGenerationDialogAction::Apply,
                             "تطبيق (APPLY)",
+                            font.clone(),
                         );
                         spawn_generation_dialog_button(
                             row,
                             VoxelGenerationDialogAction::Cancel,
                             "إلغاء (CANCEL)",
+                            font.clone(),
                         );
                     });
             });
