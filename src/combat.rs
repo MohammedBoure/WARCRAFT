@@ -2,7 +2,9 @@ use astra_voxel_world::prelude::*;
 use bevy::prelude::*;
 
 use crate::gameplay::{MissionTarget, MissionTargetKind, RelayDestroyed, RunEntity, finish_run};
-use crate::interaction::{VoxelWorldEdits, block_world_center};
+use crate::interaction::{
+    VoxelWorldEdits, block_world_center, ray_sphere_distance, voxel_raycast_loaded,
+};
 use crate::player::{PlayerModelRoot, PlayerTag};
 use crate::state::*;
 use crate::world::invalidate_edit;
@@ -27,6 +29,7 @@ pub struct Enemy {
 pub struct Projectile {
     from_player: bool,
     velocity: Vec3,
+    gravity: f32,
     damage: f32,
     kind: DamageKind,
     life: Timer,
@@ -40,6 +43,7 @@ pub struct EnemyDirector {
     timer: Timer,
     counter: u32,
     boss_spawned: bool,
+    announced_wave: Option<u8>,
 }
 impl Default for EnemyDirector {
     fn default() -> Self {
@@ -47,6 +51,7 @@ impl Default for EnemyDirector {
             timer: Timer::from_seconds(2.0, TimerMode::Once),
             counter: 0,
             boss_spawned: false,
+            announced_wave: None,
         }
     }
 }
@@ -65,11 +70,7 @@ pub struct CraftState {
 
 #[derive(Resource)]
 pub struct CombatAssets {
-    crawler: Handle<Mesh>,
-    spitter: Handle<Mesh>,
-    drone: Handle<Mesh>,
-    brute: Handle<Mesh>,
-    boss: Handle<Mesh>,
+    shield: Handle<Mesh>,
     shot: Handle<Mesh>,
     flash: Handle<Mesh>,
     beam: Handle<Mesh>,
@@ -97,13 +98,13 @@ pub struct WeaponMuzzle {
 }
 
 #[derive(Component)]
-struct ProjectileTrail {
+pub(crate) struct ProjectileTrail {
     last_position: Vec3,
     style: usize,
 }
 
 #[derive(Component)]
-struct CombatFx {
+pub(crate) struct CombatFx {
     age: f32,
     duration: f32,
     start_scale: Vec3,
@@ -112,10 +113,27 @@ struct CombatFx {
 }
 
 #[derive(Component)]
-struct FxMotion {
+pub(crate) struct FxMotion {
     velocity: Vec3,
     drag: f32,
     gravity: f32,
+}
+
+#[derive(Component)]
+pub struct EnemyAura {
+    base_scale: Vec3,
+    phase: f32,
+}
+
+#[derive(Component)]
+pub struct EnemyAimReticle {
+    base_scale: Vec3,
+}
+
+#[derive(Component)]
+pub struct BossShieldVisual {
+    base_scale: Vec3,
+    max_shield: f32,
 }
 
 pub fn setup_combat_assets(
@@ -162,7 +180,7 @@ pub fn setup_combat_assets(
             LinearRgba::rgb(4.0, 0.05, 0.02),
         ),
     ];
-    let materials = colors
+    let created_materials: Vec<_> = colors
         .into_iter()
         .map(|(base_color, emissive)| {
             materials.add(StandardMaterial {
@@ -204,17 +222,13 @@ pub fn setup_combat_assets(
     .to_vec();
 
     commands.insert_resource(CombatAssets {
-        crawler: meshes.add(Cuboid::new(4.4, 2.1, 5.2)),
-        spitter: meshes.add(Sphere::new(2.6).mesh().ico(2).expect("sphere")),
-        drone: meshes.add(Torus::new(1.2, 3.0)),
-        brute: meshes.add(Capsule3d::new(3.2, 6.5)),
-        boss: meshes.add(Sphere::new(8.5).mesh().ico(3).expect("sphere")),
+        shield: meshes.add(Sphere::new(8.5).mesh().ico(3).expect("sphere")),
         shot: meshes.add(Sphere::new(0.45).mesh().ico(1).expect("shot")),
         flash: meshes.add(Sphere::new(0.55).mesh().ico(2).expect("flash")),
         beam: meshes.add(Cuboid::new(0.14, 0.14, 1.0)),
         ring: meshes.add(Torus::new(0.55, 0.78)),
         spark: meshes.add(Cuboid::new(0.08, 0.08, 0.62)),
-        materials,
+        materials: created_materials,
         fx_materials,
         enemy_scenes: [
             "models/kenney-space/alien.glb",
@@ -282,7 +296,7 @@ pub fn handle_weapon_fire(
     aim: Res<AimSolution>,
     assets: Res<CombatAssets>,
     mut camera: ResMut<VoxelViewerCamera>,
-    targets: Query<(&GlobalTransform, &CombatTarget)>,
+    targets: Query<(Entity, &GlobalTransform, &CombatTarget)>,
     player: Query<&Transform, With<PlayerTag>>,
     muzzles: Query<(&GlobalTransform, &WeaponMuzzle)>,
     mut rigs: Query<&mut WeaponRig>,
@@ -322,21 +336,43 @@ pub fn handle_weapon_fire(
         })
         .unwrap_or((player.translation + Vec3::Y * 0.65, fallback_direction));
     let target = aim.enemy.and_then(|entity| {
-        targets.get(entity).ok().and_then(|(transform, target)| {
-            target
-                .targetable
-                .then_some((entity, transform.translation(), target.aerial))
+        targets.get(entity).ok().and_then(|(_, transform, target)| {
+            (target.targetable && weapon_accepts_target(weapon, target.aerial)).then_some((
+                entity,
+                transform.translation(),
+                target.aerial,
+            ))
         })
     });
 
+    let aim_target_point = target
+        .map(|(_, point, _)| point)
+        .or(aim.aim_point)
+        .or(aim.world_point)
+        .unwrap_or(origin + mount_direction * 64.0);
+
     match weapon {
         WeaponKind::PulseRifle => {
-            let end = target
-                .map(|(_, point, _)| point)
-                .or(aim.world_point)
-                .unwrap_or(origin + mount_direction * 64.0);
+            let end = aim_target_point;
             let direction = (end - origin).normalize_or_zero();
-            if let Some((entity, _, _)) = target {
+            let hit_enemy = target.map(|(entity, _, _)| entity).or_else(|| {
+                targets.iter().find_map(|(entity, t_trans, t_data)| {
+                    if t_data.targetable
+                        && ray_sphere_distance(
+                            origin,
+                            direction,
+                            t_trans.translation(),
+                            t_data.radius + 1.2,
+                        )
+                        .is_some()
+                    {
+                        Some(entity)
+                    } else {
+                        None
+                    }
+                })
+            });
+            if let Some(entity) = hit_enemy {
                 damage.write(DamageEvent {
                     target: DamageTarget::Enemy(entity),
                     amount: 14.0 + level as f32 * 4.0,
@@ -353,12 +389,8 @@ pub fn handle_weapon_fire(
             sounds.write(GameSound::PulseShot);
         }
         WeaponKind::PlasmaMortar => {
-            let point = target
-                .filter(|(_, _, aerial)| !aerial)
-                .map(|(_, point, _)| point)
-                .or(aim.world_point)
-                .unwrap_or(origin + mount_direction * 42.0);
-            let velocity = (point - origin).normalize_or_zero() * 31.0 + Vec3::Y * 5.5;
+            let point = aim_target_point;
+            let velocity = ballistic_velocity(origin, point, 38.0, 17.0);
             spawn_shot(
                 &mut commands,
                 &assets,
@@ -368,6 +400,7 @@ pub fn handle_weapon_fire(
                 Projectile {
                     from_player: true,
                     velocity,
+                    gravity: 17.0,
                     damage: 30.0 + level as f32 * 8.0,
                     kind: DamageKind::Plasma,
                     life: Timer::from_seconds(2.4, TimerMode::Once),
@@ -383,9 +416,8 @@ pub fn handle_weapon_fire(
             sounds.write(GameSound::PlasmaShot);
         }
         WeaponKind::IonLance => {
-            let Some((entity, point, true)) = target else {
-                return;
-            };
+            let point = aim_target_point;
+            let locked_entity = target.map(|(entity, _, _)| entity);
             let velocity = (point - origin).normalize_or_zero() * 42.0;
             spawn_shot(
                 &mut commands,
@@ -396,11 +428,12 @@ pub fn handle_weapon_fire(
                 Projectile {
                     from_player: true,
                     velocity,
+                    gravity: 0.0,
                     damage: 24.0 + level as f32 * 8.0,
                     kind: DamageKind::Ion,
                     life: Timer::from_seconds(3.0, TimerMode::Once),
                     radius: 1.4,
-                    target: Some(entity),
+                    target: locked_entity,
                     area: 0.0,
                 },
             );
@@ -412,7 +445,26 @@ pub fn handle_weapon_fire(
         }
     }
 }
-fn weapon_recipe(weapon: WeaponKind, level: u8) -> Option<&'static [(ResourceKind, u16)]> {
+fn projectile_accepts_target(kind: DamageKind, aerial: bool) -> bool {
+    match kind {
+        DamageKind::Pulse | DamageKind::Enemy => true,
+        DamageKind::Plasma => !aerial,
+        DamageKind::Ion => aerial,
+    }
+}
+
+fn weapon_accepts_target(weapon: WeaponKind, aerial: bool) -> bool {
+    match weapon {
+        WeaponKind::PulseRifle => true,
+        WeaponKind::PlasmaMortar => !aerial,
+        WeaponKind::IonLance => aerial,
+    }
+}
+
+pub(crate) fn weapon_recipe(
+    weapon: WeaponKind,
+    level: u8,
+) -> Option<&'static [(ResourceKind, u16)]> {
     match (weapon, level) {
         (WeaponKind::PulseRifle, 1) => {
             Some(&[(ResourceKind::SpaceIron, 4), (ResourceKind::Titanium, 2)])
@@ -451,18 +503,27 @@ pub fn drive_enemy_spawns(
     mut session: ResMut<GameSession>,
     player: Query<&Transform, With<PlayerTag>>,
     enemies: Query<&Enemy>,
+    mut waves: MessageWriter<WaveStarted>,
+    mut sounds: MessageWriter<GameSound>,
     mut commands: Commands,
 ) {
     let count = enemies.iter().count();
     session.active_enemies = count;
     if !matches!(
         session.phase,
-        MissionPhase::HomeDefense
+        MissionPhase::HomePreparation
+            | MissionPhase::HomeDefense
+            | MissionPhase::AlienLanding
             | MissionPhase::RelayHunt
             | MissionPhase::Extraction
             | MissionPhase::GateAssault
     ) {
         return;
+    }
+    if session.wave > 0 && director.announced_wave != Some(session.wave) {
+        director.announced_wave = Some(session.wave);
+        waves.write(WaveStarted(session.wave));
+        sounds.write(GameSound::Warning);
     }
     if session.phase == MissionPhase::GateAssault && !director.boss_spawned {
         let point = player
@@ -471,6 +532,35 @@ pub fn drive_enemy_spawns(
             .unwrap_or(Vec3::Y * 35.0);
         spawn_enemy(&mut commands, &assets, EnemyKind::CarrierBoss, point, 1.0);
         director.boss_spawned = true;
+        sounds.write(GameSound::Warning);
+    }
+    let Ok(player_transform) = player.single() else {
+        return;
+    };
+    if count == 0 && director.counter == 0 {
+        let roster = opening_roster(session.route);
+        let spawn_radius = if session.route == PlanetRoute::HomeDefense {
+            24.0
+        } else {
+            19.0
+        };
+        let difficulty = if session.route == PlanetRoute::HomeDefense {
+            0.52
+        } else {
+            1.0
+        };
+        for (index, kind) in roster.iter().copied().enumerate() {
+            let angle = index as f32 * std::f32::consts::TAU / roster.len() as f32 + 0.35;
+            let x = player_transform.translation.x + angle.cos() * spawn_radius;
+            let z = player_transform.translation.z + angle.sin() * spawn_radius;
+            let y = if kind.is_aerial() {
+                player_transform.translation.y + 14.0
+            } else {
+                ground_height(&loaded, &world, x, z) + 2.4
+            };
+            spawn_enemy(&mut commands, &assets, kind, Vec3::new(x, y, z), difficulty);
+        }
+        director.counter = roster.len() as u32;
     }
     let cap = if session.route == PlanetRoute::HomeDefense {
         10
@@ -480,17 +570,14 @@ pub fn drive_enemy_spawns(
     if count >= cap || !director.timer.tick(time.delta()).just_finished() {
         return;
     }
-    let Ok(player) = player.single() else {
-        return;
-    };
     director.counter = director.counter.wrapping_add(1);
     let kind = choose_enemy(&session, director.counter);
     let angle = director.counter as f32 * 2.399_963;
-    let radius = 42.0 + (director.counter % 5) as f32 * 5.0;
-    let x = player.translation.x + angle.cos() * radius;
-    let z = player.translation.z + angle.sin() * radius;
+    let radius = 18.0 + (director.counter % 5) as f32 * 3.5;
+    let x = player_transform.translation.x + angle.cos() * radius;
+    let z = player_transform.translation.z + angle.sin() * radius;
     let y = if kind.is_aerial() {
-        player.translation.y + 17.0
+        player_transform.translation.y + 15.0
     } else {
         ground_height(&loaded, &world, x, z) + 2.4
     };
@@ -501,6 +588,7 @@ pub fn drive_enemy_spawns(
     };
     spawn_enemy(&mut commands, &assets, kind, Vec3::new(x, y, z), difficulty);
     let interval = match session.phase {
+        MissionPhase::HomePreparation => 4.5,
         MissionPhase::HomeDefense => 6.2 - session.wave as f32 * 0.85,
         MissionPhase::Extraction => 1.8,
         MissionPhase::GateAssault => 2.5,
@@ -508,6 +596,23 @@ pub fn drive_enemy_spawns(
     }
     .max(1.25);
     director.timer = Timer::from_seconds(interval, TimerMode::Once);
+}
+
+fn opening_roster(route: PlanetRoute) -> &'static [EnemyKind] {
+    const HOME_PATROL: [EnemyKind; 2] = [EnemyKind::Crawler, EnemyKind::Crawler];
+    const WAR_LANDING: [EnemyKind; 6] = [
+        EnemyKind::Crawler,
+        EnemyKind::Spitter,
+        EnemyKind::Drone,
+        EnemyKind::Crawler,
+        EnemyKind::Brute,
+        EnemyKind::Spitter,
+    ];
+    match route {
+        PlanetRoute::HomeDefense => &HOME_PATROL,
+        PlanetRoute::InvadedPlanet => &WAR_LANDING,
+        PlanetRoute::Undecided => &[],
+    }
 }
 
 fn choose_enemy(session: &GameSession, n: u32) -> EnemyKind {
@@ -547,12 +652,12 @@ fn spawn_enemy(
     position: Vec3,
     difficulty: f32,
 ) {
-    let (mesh, material, health, shield, speed, radius, attack) = match kind {
-        EnemyKind::Crawler => (&assets.crawler, 0, 42.0, 0.0, 12.5, 3.0, 0.72),
-        EnemyKind::Spitter => (&assets.spitter, 1, 62.0, 0.0, 7.2, 3.2, 1.55),
-        EnemyKind::Drone => (&assets.drone, 2, 54.0, 0.0, 10.5, 3.5, 1.35),
-        EnemyKind::Brute => (&assets.brute, 3, 190.0, 0.0, 4.6, 4.5, 1.10),
-        EnemyKind::CarrierBoss => (&assets.boss, 4, 760.0, 320.0, 6.5, 9.5, 0.85),
+    let (material, health, shield, speed, radius, attack) = match kind {
+        EnemyKind::Crawler => (0, 42.0, 0.0, 12.5, 3.0, 0.72),
+        EnemyKind::Spitter => (1, 62.0, 0.0, 7.2, 3.2, 1.55),
+        EnemyKind::Drone => (2, 54.0, 0.0, 10.5, 3.5, 1.35),
+        EnemyKind::Brute => (3, 190.0, 0.0, 4.6, 4.5, 1.10),
+        EnemyKind::CarrierBoss => (4, 760.0, 320.0, 6.5, 9.5, 0.85),
     };
     let scene_index = match kind {
         EnemyKind::Crawler => 0,
@@ -568,6 +673,20 @@ fn spawn_enemy(
         EnemyKind::Brute => 3.6,
         EnemyKind::CarrierBoss => 6.0,
     };
+    let aura_scale = Vec3::new(radius * 0.82, 0.38, radius * 0.82);
+    let reticle_scale = Vec3::new(radius * 1.18, 0.52, radius * 1.18);
+    let scaled_shield = shield * difficulty;
+    spawn_impact_fx(
+        commands,
+        assets,
+        position,
+        if kind == EnemyKind::CarrierBoss { 2 } else { 3 },
+        if kind == EnemyKind::CarrierBoss {
+            3.4
+        } else {
+            1.15
+        },
+    );
     commands
         .spawn((
             Name::new(format!("Alien {kind:?}")),
@@ -575,7 +694,7 @@ fn spawn_enemy(
             Enemy {
                 kind,
                 health: health * difficulty,
-                shield: shield * difficulty,
+                shield: scaled_shield,
                 speed,
                 attack: Timer::from_seconds(attack, TimerMode::Repeating),
             },
@@ -588,10 +707,96 @@ fn spawn_enemy(
         ))
         .with_children(|parent| {
             parent.spawn((
+                Name::new("Open source alien model"),
                 SceneRoot(assets.enemy_scenes[scene_index].clone()),
                 Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::splat(scene_scale)),
             ));
+            parent.spawn((
+                Name::new("Enemy presence aura"),
+                Mesh3d(assets.ring.clone()),
+                MeshMaterial3d(assets.materials[material].clone()),
+                Transform::from_xyz(0.0, -2.05, 0.0).with_scale(aura_scale),
+                EnemyAura {
+                    base_scale: aura_scale,
+                    phase: scene_index as f32 * 1.37,
+                },
+            ));
+            parent.spawn((
+                Name::new("Enemy target reticle"),
+                Mesh3d(assets.ring.clone()),
+                MeshMaterial3d(assets.fx_materials[0].clone()),
+                Transform::from_xyz(0.0, -1.92, 0.0).with_scale(reticle_scale),
+                Visibility::Hidden,
+                EnemyAimReticle {
+                    base_scale: reticle_scale,
+                },
+            ));
+            if kind == EnemyKind::CarrierBoss {
+                let shield_scale = Vec3::splat(1.05);
+                parent.spawn((
+                    Name::new("Carrier ion shield"),
+                    Mesh3d(assets.shield.clone()),
+                    MeshMaterial3d(assets.fx_materials[2].clone()),
+                    Transform::from_xyz(0.0, 1.8, 0.0).with_scale(shield_scale),
+                    BossShieldVisual {
+                        base_scale: shield_scale,
+                        max_shield: scaled_shield.max(1.0),
+                    },
+                ));
+            }
         });
+}
+pub fn update_enemy_visuals(
+    time: Res<Time>,
+    aim: Res<AimSolution>,
+    enemies: Query<&Enemy>,
+    mut auras: Query<
+        (&EnemyAura, &mut Transform),
+        (Without<EnemyAimReticle>, Without<BossShieldVisual>),
+    >,
+    mut reticles: Query<
+        (&ChildOf, &EnemyAimReticle, &mut Transform, &mut Visibility),
+        (Without<EnemyAura>, Without<BossShieldVisual>),
+    >,
+    mut shields: Query<
+        (&ChildOf, &BossShieldVisual, &mut Transform, &mut Visibility),
+        (Without<EnemyAura>, Without<EnemyAimReticle>),
+    >,
+) {
+    let elapsed = time.elapsed_secs();
+    for (aura, mut transform) in &mut auras {
+        let pulse = 1.0 + (elapsed * 3.4 + aura.phase).sin() * 0.10;
+        transform.scale = aura.base_scale * pulse;
+        transform.rotate_y(time.delta_secs() * 0.72);
+    }
+    for (parent, reticle, mut transform, mut visibility) in &mut reticles {
+        let selected = aim.enemy == Some(parent.parent());
+        *visibility = if selected {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        if selected {
+            let pulse = 1.0 + (elapsed * 7.5).sin() * 0.08;
+            transform.scale = reticle.base_scale * pulse;
+            transform.rotate_y(-time.delta_secs() * 1.8);
+        }
+    }
+    for (parent, shield, mut transform, mut visibility) in &mut shields {
+        let Ok(enemy) = enemies.get(parent.parent()) else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        let ratio = (enemy.shield / shield.max_shield).clamp(0.0, 1.0);
+        *visibility = if ratio > 0.0 {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        let pulse = 1.0 + (elapsed * 4.8).sin() * (0.025 + ratio * 0.035);
+        transform.scale = shield.base_scale * pulse * (0.90 + ratio * 0.10);
+        transform.rotate_y(time.delta_secs() * 0.55);
+    }
 }
 
 pub fn update_enemy_ai(
@@ -623,7 +828,7 @@ pub fn update_enemy_ai(
             None
         };
         let (target, damage_target) = objective
-            .map(|(e, t, _)| (t.translation, DamageTarget::Enemy(e)))
+            .map(|(e, t, _)| (t.translation, DamageTarget::Base(e)))
             .unwrap_or((player.translation, DamageTarget::Player));
         let offset = target - transform.translation;
         let flat = Vec3::new(offset.x, 0.0, offset.z);
@@ -631,20 +836,42 @@ pub fn update_enemy_ai(
         if enemy.kind == EnemyKind::CarrierBoss && enemy.shield <= 0.0 {
             target_data.aerial = false;
         }
+        let forward = flat.normalize_or_zero();
+        let side = Vec3::new(-forward.z, 0.0, forward.x);
         if target_data.aerial {
             let height = if enemy.kind == EnemyKind::CarrierBoss && enemy.shield <= 0.0 {
                 target.y + 5.0
             } else {
                 target.y + 15.0
             };
-            let desired = flat.normalize_or_zero() * enemy.speed
-                + Vec3::Y * (height - transform.translation.y) * 1.4;
-            transform.translation += desired.clamp_length_max(enemy.speed * 1.6) * dt;
-        } else if distance > melee_range(enemy.kind) {
-            let candidate = transform.translation + flat.normalize_or_zero() * enemy.speed * dt;
-            let ground = ground_height(&loaded, &world, candidate.x, candidate.z);
-            if (ground + 2.4 - transform.translation.y).abs() <= 4.0 {
-                transform.translation = Vec3::new(candidate.x, ground + 2.2, candidate.z);
+            let orbit = side
+                * (time.elapsed_secs() * 1.45 + transform.translation.x * 0.03).sin()
+                * enemy.speed
+                * if enemy.kind == EnemyKind::Drone {
+                    0.72
+                } else {
+                    0.34
+                };
+            let desired =
+                forward * enemy.speed + orbit + Vec3::Y * (height - transform.translation.y) * 1.4;
+            transform.translation += desired.clamp_length_max(enemy.speed * 1.65) * dt;
+        } else {
+            let desired_direction = match enemy.kind {
+                EnemyKind::Spitter if distance < 15.0 => -forward,
+                EnemyKind::Spitter if distance <= 27.0 => {
+                    side * (time.elapsed_secs() * 1.8 + transform.translation.z * 0.04).sin()
+                }
+                _ if distance > melee_range(enemy.kind) => forward,
+                _ => Vec3::ZERO,
+            };
+            if desired_direction != Vec3::ZERO {
+                let candidate = transform.translation
+                    + desired_direction.normalize_or_zero() * enemy.speed * dt;
+                let ground = ground_height(&loaded, &world, candidate.x, candidate.z);
+                let step = ground + 2.2 - transform.translation.y;
+                if (-2.6..=4.0).contains(&step) {
+                    transform.translation = Vec3::new(candidate.x, ground + 2.2, candidate.z);
+                }
             }
         }
         if flat.length_squared() > 0.2 {
@@ -682,6 +909,7 @@ pub fn update_enemy_ai(
                     Projectile {
                         from_player: false,
                         velocity,
+                        gravity: 0.0,
                         damage: if enemy.kind == EnemyKind::CarrierBoss {
                             16.0
                         } else {
@@ -701,7 +929,7 @@ pub fn update_enemy_ai(
 }
 
 pub fn update_projectiles(
-    time: Res<Time>,
+    time: Res<Time<Fixed>>,
     assets: Res<CombatAssets>,
     mut shots: Query<
         (
@@ -714,6 +942,7 @@ pub fn update_projectiles(
     >,
     targets: Query<(Entity, &GlobalTransform, &CombatTarget)>,
     player: Query<&Transform, (With<PlayerTag>, Without<Projectile>)>,
+    loaded: Res<LoadedVoxelChunks>,
     mut damage: MessageWriter<DamageEvent>,
     mut commands: Commands,
 ) {
@@ -743,16 +972,79 @@ pub fn update_projectiles(
                 .velocity
                 .lerp(desired, 1.0 - (-7.0 * time.delta_secs()).exp());
         }
-        if shot.kind == DamageKind::Plasma {
-            shot.velocity.y -= 14.0 * time.delta_secs();
+        let start = transform.translation;
+        let dt = time.delta_secs();
+        shot.velocity.y -= shot.gravity * dt;
+        let end = start + shot.velocity * dt;
+        #[derive(Clone, Copy)]
+        enum ProjectileImpact {
+            Target(DamageTarget),
+            Terrain,
         }
-        transform.translation += shot.velocity * time.delta_secs();
-        if trail.last_position.distance_squared(transform.translation) > 0.10 {
+        let mut impact = if shot.from_player {
+            targets
+                .iter()
+                .filter(|(_, _, target)| {
+                    target.targetable && projectile_accepts_target(shot.kind, target.aerial)
+                })
+                .filter_map(|(entity, target_transform, target)| {
+                    segment_sphere_hit_fraction(
+                        start,
+                        end,
+                        target_transform.translation(),
+                        target.radius + shot.radius,
+                    )
+                    .map(|fraction| {
+                        (
+                            fraction,
+                            ProjectileImpact::Target(DamageTarget::Enemy(entity)),
+                        )
+                    })
+                })
+                .min_by(|left, right| left.0.total_cmp(&right.0))
+        } else {
+            player.single().ok().and_then(|player| {
+                segment_sphere_hit_fraction(start, end, player.translation, 3.4 + shot.radius)
+                    .map(|fraction| (fraction, ProjectileImpact::Target(DamageTarget::Player)))
+            })
+        };
+        if let Some(fraction) = terrain_hit_fraction(&loaded, start, end, shot.radius) {
+            if impact.is_none_or(|(target_fraction, _)| fraction < target_fraction) {
+                impact = Some((fraction, ProjectileImpact::Terrain));
+            }
+        }
+        if let Some((fraction, impact)) = impact {
+            let impact_position = start.lerp(end, fraction);
+            if shot.area > 0.0 && shot.from_player {
+                area_damage(impact_position, &shot, &targets, &mut damage);
+            } else if let ProjectileImpact::Target(target) = impact {
+                damage.write(DamageEvent {
+                    target,
+                    amount: shot.damage,
+                    kind: shot.kind,
+                });
+            }
+            spawn_impact_fx(
+                &mut commands,
+                &assets,
+                impact_position,
+                trail.style,
+                if shot.area > 0.0 { 2.1 } else { 0.85 },
+            );
+            commands.entity(entity).despawn();
+            continue;
+        }
+        transform.translation = end;
+        let direction = shot.velocity.normalize_or_zero();
+        if direction != Vec3::ZERO {
+            transform.rotation = Quat::from_rotation_arc(Vec3::Z, direction);
+        }
+        if trail.last_position.distance_squared(end) > 0.10 {
             spawn_tracer_fx(
                 &mut commands,
                 &assets,
                 trail.last_position,
-                transform.translation,
+                end,
                 trail.style,
                 if shot.kind == DamageKind::Plasma {
                     1.7
@@ -765,47 +1057,69 @@ pub fn update_projectiles(
                     0.13
                 },
             );
-            trail.last_position = transform.translation;
-        }
-        let hit = if shot.from_player {
-            targets
-                .iter()
-                .find(|(_, target_transform, data)| {
-                    data.targetable
-                        && target_transform
-                            .translation()
-                            .distance(transform.translation)
-                            <= data.radius + shot.radius
-                })
-                .map(|(entity, _, _)| DamageTarget::Enemy(entity))
-        } else {
-            player
-                .single()
-                .ok()
-                .filter(|player| player.translation.distance(transform.translation) <= 3.4)
-                .map(|_| DamageTarget::Player)
-        };
-        if let Some(target) = hit {
-            if shot.area > 0.0 {
-                area_damage(transform.translation, &shot, &targets, &mut damage);
-            } else {
-                damage.write(DamageEvent {
-                    target,
-                    amount: shot.damage,
-                    kind: shot.kind,
-                });
-            }
-            spawn_impact_fx(
-                &mut commands,
-                &assets,
-                transform.translation,
-                trail.style,
-                if shot.area > 0.0 { 2.1 } else { 0.85 },
-            );
-            commands.entity(entity).despawn();
+            trail.last_position = end;
         }
     }
 }
+
+fn ballistic_velocity(origin: Vec3, target: Vec3, speed: f32, gravity: f32) -> Vec3 {
+    let offset = target - origin;
+    let horizontal = Vec3::new(offset.x, 0.0, offset.z);
+    let horizontal_distance = horizontal.length();
+    if horizontal_distance <= f32::EPSILON || gravity <= f32::EPSILON {
+        return offset.normalize_or_zero() * speed;
+    }
+    let speed_squared = speed * speed;
+    let discriminant = speed_squared * speed_squared
+        - gravity
+            * (gravity * horizontal_distance * horizontal_distance
+                + 2.0 * offset.y * speed_squared);
+    if discriminant < 0.0 {
+        return offset.normalize_or_zero() * speed + Vec3::Y * (gravity * 0.16);
+    }
+    let tangent = (speed_squared - discriminant.sqrt()) / (gravity * horizontal_distance);
+    let cosine = 1.0 / (1.0 + tangent * tangent).sqrt();
+    horizontal.normalize_or_zero() * (speed * cosine) + Vec3::Y * (speed * cosine * tangent)
+}
+
+fn segment_sphere_hit_fraction(start: Vec3, end: Vec3, center: Vec3, radius: f32) -> Option<f32> {
+    let segment = end - start;
+    let segment_length_squared = segment.length_squared();
+    if segment_length_squared <= f32::EPSILON {
+        return (start.distance_squared(center) <= radius * radius).then_some(0.0);
+    }
+    let offset = start - center;
+    let b = 2.0 * offset.dot(segment);
+    let c = offset.length_squared() - radius * radius;
+    if c <= 0.0 {
+        return Some(0.0);
+    }
+    let discriminant = b * b - 4.0 * segment_length_squared * c;
+    if discriminant < 0.0 {
+        return None;
+    }
+    let fraction = (-b - discriminant.sqrt()) / (2.0 * segment_length_squared);
+    (0.0..=1.0).contains(&fraction).then_some(fraction)
+}
+
+fn terrain_hit_fraction(
+    loaded: &LoadedVoxelChunks,
+    start: Vec3,
+    end: Vec3,
+    radius: f32,
+) -> Option<f32> {
+    let segment = end - start;
+    let distance = segment.length();
+    if distance <= f32::EPSILON {
+        return None;
+    }
+    let direction = segment / distance;
+    let hit = voxel_raycast_loaded(loaded, start, direction, distance + radius)?;
+    let hit_center = block_world_center(hit.block);
+    let impact_distance = ((hit_center - start).dot(direction) - radius).max(0.0);
+    Some((impact_distance / distance).clamp(0.0, 1.0))
+}
+
 fn area_damage(
     center: Vec3,
     shot: &Projectile,
@@ -813,7 +1127,10 @@ fn area_damage(
     damage: &mut MessageWriter<DamageEvent>,
 ) {
     for (entity, transform, target) in targets {
-        if !target.aerial && transform.translation().distance(center) <= shot.area {
+        if target.targetable
+            && !target.aerial
+            && transform.translation().distance(center) <= shot.area
+        {
             damage.write(DamageEvent {
                 target: DamageTarget::Enemy(entity),
                 amount: shot.damage,
@@ -823,19 +1140,27 @@ fn area_damage(
     }
 }
 
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct DamageWriters<'w> {
+    pub relays: MessageWriter<'w, RelayDestroyed>,
+    pub resources: MessageWriter<'w, ResourceCollected>,
+    pub kills: MessageWriter<'w, EnemyKilled>,
+    pub respawned: MessageWriter<'w, PlayerRespawned>,
+    pub sounds: MessageWriter<'w, GameSound>,
+    pub finished: MessageWriter<'w, RunFinished>,
+}
+
 pub fn process_damage(
     time: Res<Time>,
     balance: Res<BalanceConfig>,
+    assets: Res<CombatAssets>,
     mut runtime: ResMut<CombatRuntime>,
     mut session: ResMut<GameSession>,
     mut player: Query<&mut Transform, With<PlayerTag>>,
-    mut enemies: Query<(&mut Enemy, &mut CombatTarget)>,
-    mut objectives: Query<&mut MissionTarget>,
+    mut enemies: Query<(&mut Enemy, &mut CombatTarget, &Transform)>,
+    mut objectives: Query<(&mut MissionTarget, &Transform), Without<Enemy>>,
     mut events: MessageReader<DamageEvent>,
-    mut relays: MessageWriter<RelayDestroyed>,
-    mut resources: MessageWriter<ResourceCollected>,
-    mut sounds: MessageWriter<GameSound>,
-    mut finished: MessageWriter<RunFinished>,
+    mut writers: DamageWriters,
     mut next_state: ResMut<NextState<AppState>>,
     mut commands: Commands,
 ) {
@@ -848,13 +1173,13 @@ pub fn process_damage(
                 session.loadout.shield -= absorbed;
                 session.loadout.health =
                     (session.loadout.health - event.amount + absorbed).max(0.0);
-                sounds.write(GameSound::PlayerHit);
+                writers.sounds.write(GameSound::PlayerHit);
                 if session.loadout.health <= 0.0 {
                     if session.phase == MissionPhase::GateAssault {
                         finish_run(
                             &mut session,
                             RunOutcome::MissionFailed,
-                            &mut finished,
+                            &mut writers.finished,
                             &mut next_state,
                         );
                     } else {
@@ -866,11 +1191,12 @@ pub fn process_damage(
                         if let Ok(mut player) = player.single_mut() {
                             player.translation = session.safe_position + Vec3::Y;
                         }
+                        writers.respawned.write(PlayerRespawned);
                     }
                 }
             }
             DamageTarget::Enemy(entity) => {
-                if let Ok((mut enemy, mut target)) = enemies.get_mut(entity) {
+                if let Ok((mut enemy, mut target, enemy_transform)) = enemies.get_mut(entity) {
                     if enemy.kind == EnemyKind::CarrierBoss && enemy.shield > 0.0 {
                         enemy.shield = (enemy.shield
                             - event.amount
@@ -884,14 +1210,35 @@ pub fn process_damage(
                             target.aerial = false;
                             session.objective_hint =
                                 "درع الحاملة انهار — اضرب النواة بالنبض والبلازما".into();
+                            spawn_impact_fx(
+                                &mut commands,
+                                &assets,
+                                enemy_transform.translation + Vec3::Y * 1.8,
+                                2,
+                                3.2,
+                            );
+                            writers.sounds.write(GameSound::Warning);
                         }
                     } else {
                         enemy.health -= event.amount;
                     }
                     if enemy.health <= 0.0 {
                         let kind = enemy.kind;
+                        let death_position = enemy_transform.translation;
+                        spawn_impact_fx(
+                            &mut commands,
+                            &assets,
+                            death_position,
+                            if kind == EnemyKind::CarrierBoss { 2 } else { 3 },
+                            if kind == EnemyKind::CarrierBoss {
+                                5.4
+                            } else {
+                                2.1
+                            },
+                        );
                         commands.entity(entity).despawn();
                         session.loadout.kills += 1;
+                        writers.kills.write(EnemyKilled(kind));
                         let drop = match kind {
                             EnemyKind::Crawler | EnemyKind::Spitter => ResourceKind::SpaceIron,
                             EnemyKind::Drone => ResourceKind::Helium3,
@@ -899,25 +1246,33 @@ pub fn process_damage(
                             EnemyKind::CarrierBoss => ResourceKind::BioPlasma,
                         };
                         session.loadout.add_resource(drop, 1);
-                        resources.write(ResourceCollected(drop, 1));
-                        sounds.write(GameSound::EnemyDeath);
+                        writers.resources.write(ResourceCollected(drop, 1));
+                        writers.sounds.write(GameSound::EnemyDeath);
                         if kind == EnemyKind::CarrierBoss {
                             finish_run(
                                 &mut session,
                                 RunOutcome::GateDestroyed,
-                                &mut finished,
+                                &mut writers.finished,
                                 &mut next_state,
                             );
                         }
                     } else {
-                        sounds.write(GameSound::EnemyHit);
+                        writers.sounds.write(GameSound::EnemyHit);
                     }
-                } else if let Ok(mut objective) = objectives.get_mut(entity) {
+                } else if let Ok((mut objective, objective_transform)) = objectives.get_mut(entity)
+                {
                     objective.health -= event.amount;
                     match objective.kind {
                         MissionTargetKind::Relay(index) if objective.health <= 0.0 => {
+                            spawn_impact_fx(
+                                &mut commands,
+                                &assets,
+                                objective_transform.translation,
+                                1,
+                                3.0,
+                            );
                             commands.entity(entity).despawn();
-                            relays.write(RelayDestroyed(index));
+                            writers.relays.write(RelayDestroyed(index));
                         }
                         MissionTargetKind::HomeCore | MissionTargetKind::Ship => {
                             session.base_health = objective.health.max(0.0);
@@ -925,7 +1280,7 @@ pub fn process_damage(
                                 finish_run(
                                     &mut session,
                                     RunOutcome::MissionFailed,
-                                    &mut finished,
+                                    &mut writers.finished,
                                     &mut next_state,
                                 );
                             }
@@ -934,7 +1289,20 @@ pub fn process_damage(
                     }
                 }
             }
-            DamageTarget::Base => {}
+            DamageTarget::Base(entity) => {
+                if let Ok((mut objective, _)) = objectives.get_mut(entity) {
+                    objective.health = (objective.health - event.amount).max(0.0);
+                    session.base_health = objective.health;
+                    if objective.health <= 0.0 {
+                        finish_run(
+                            &mut session,
+                            RunOutcome::MissionFailed,
+                            &mut writers.finished,
+                            &mut next_state,
+                        );
+                    }
+                }
+            }
         }
     }
     if runtime.last_hit > 4.0 {
@@ -1122,25 +1490,25 @@ fn weapon_mount(weapon: WeaponKind) -> (Transform, f32) {
     match weapon {
         WeaponKind::PulseRifle => (
             Transform {
-                translation: Vec3::new(-0.20, -0.71, 0.20),
-                rotation: Quat::from_euler(EulerRot::XYZ, -0.10, 0.0, 0.0),
-                scale: Vec3::splat(1.10),
+                translation: Vec3::new(-0.15, -0.65, 0.15),
+                rotation: Quat::from_euler(EulerRot::YXZ, std::f32::consts::PI, -0.10, 0.0),
+                scale: Vec3::splat(1.15),
             },
             0.47,
         ),
         WeaponKind::PlasmaMortar => (
             Transform {
-                translation: Vec3::new(-0.20, -0.82, 0.16),
-                rotation: Quat::from_euler(EulerRot::XYZ, -0.08, 0.0, 0.0),
-                scale: Vec3::splat(1.45),
+                translation: Vec3::new(-0.15, -0.70, 0.15),
+                rotation: Quat::from_euler(EulerRot::YXZ, std::f32::consts::PI, -0.08, 0.0),
+                scale: Vec3::splat(1.35),
             },
             0.29,
         ),
         WeaponKind::IonLance => (
             Transform {
-                translation: Vec3::new(-0.20, -0.82, 0.18),
-                rotation: Quat::from_euler(EulerRot::XYZ, -0.06, 0.0, 0.0),
-                scale: Vec3::splat(1.24),
+                translation: Vec3::new(-0.15, -0.72, 0.15),
+                rotation: Quat::from_euler(EulerRot::YXZ, std::f32::consts::PI, -0.06, 0.0),
+                scale: Vec3::splat(1.25),
             },
             0.38,
         ),
@@ -1189,8 +1557,9 @@ pub fn update_combat_effects(
         let eased = 1.0 - (1.0 - progress).powi(2);
         transform.scale = effect.start_scale.lerp(effect.end_scale, eased);
         if let Some(mut motion) = motion {
+            let drag_decay = (-motion.drag * dt).exp();
             motion.velocity.y -= motion.gravity * dt;
-            motion.velocity *= (-motion.drag * dt).exp();
+            motion.velocity *= drag_decay;
             transform.translation += motion.velocity * dt;
             let direction = motion.velocity.normalize_or_zero();
             if direction != Vec3::ZERO {
@@ -1401,5 +1770,25 @@ mod tests {
         assert_ne!(fx_style(DamageKind::Pulse), fx_style(DamageKind::Plasma));
         assert_ne!(fx_style(DamageKind::Plasma), fx_style(DamageKind::Ion));
         assert_ne!(fx_style(DamageKind::Ion), fx_style(DamageKind::Enemy));
+    }
+
+    #[test]
+    fn fast_projectile_hits_the_first_point_of_a_target() {
+        let hit = segment_sphere_hit_fraction(
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 20.0),
+            Vec3::new(0.0, 0.0, 10.0),
+            1.0,
+        );
+        assert_eq!(hit, Some(0.45));
+    }
+
+    #[test]
+    fn plasma_ballistic_solution_reaches_a_level_target() {
+        let target = Vec3::new(0.0, 0.0, 24.0);
+        let velocity = ballistic_velocity(Vec3::ZERO, target, 38.0, 17.0);
+        let flight_time = target.z / velocity.z;
+        let height = velocity.y * flight_time - 0.5 * 17.0 * flight_time * flight_time;
+        assert!(height.abs() < 0.01, "expected a level impact, got {height}");
     }
 }
