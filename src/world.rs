@@ -4,6 +4,8 @@ use astra_voxel_world::prelude::*;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 
+use crate::interaction::*;
+use crate::player::*;
 use crate::state::*;
 use crate::ui::*;
 
@@ -13,7 +15,7 @@ pub fn setup_viewer_scene(
     mut commands: Commands,
 ) {
     let mut camera_transform = Transform::default();
-    apply_viewer_camera_transform(world.settings, &camera_state, &mut camera_transform);
+    apply_viewer_camera_transform(world.settings, &camera_state, &mut camera_transform, 75.0);
 
     commands.spawn((
         Name::new("Voxel Viewer Camera"),
@@ -103,40 +105,50 @@ pub fn control_viewer_camera(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut mouse_wheel: MessageReader<MouseWheel>,
     time: Res<Time>,
+    player_state: Res<PlayerState>,
     mut camera_state: ResMut<VoxelViewerCamera>,
     mut camera_query: Query<&mut Transform, With<VoxelViewerCameraTag>>,
+    player_query: Query<&Transform, (With<PlayerTag>, Without<VoxelViewerCameraTag>)>,
 ) {
     if dialog.open {
         mouse_wheel.clear();
         return;
     }
 
-    let forward = Vec2::new(-camera_state.yaw.sin(), -camera_state.yaw.cos());
-    let right = Vec2::new(camera_state.yaw.cos(), -camera_state.yaw.sin());
-    let mut movement = Vec2::ZERO;
+    // الكاميرا تتبع موقع البطل بالكامل عند حركته
+    if let Ok(player_transform) = player_query.single() {
+        camera_state.center = Vec2::new(
+            player_transform.translation.x / BLOCK_SIZE,
+            player_transform.translation.z / BLOCK_SIZE,
+        );
+    } else {
+        let forward = Vec2::new(-camera_state.yaw.sin(), -camera_state.yaw.cos());
+        let right = Vec2::new(camera_state.yaw.cos(), -camera_state.yaw.sin());
+        let mut movement = Vec2::ZERO;
 
-    if keyboard.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
-        movement += forward;
-    }
-    if keyboard.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
-        movement -= forward;
-    }
-    if keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
-        movement += right;
-    }
-    if keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
-        movement -= right;
-    }
+        if keyboard.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
+            movement += forward;
+        }
+        if keyboard.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
+            movement -= forward;
+        }
+        if keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
+            movement += right;
+        }
+        if keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
+            movement -= right;
+        }
 
-    if movement.length_squared() > 0.0 {
-        let speed = CAMERA_MOVE_SPEED
-            * if keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
-                CAMERA_FAST_MULTIPLIER
-            } else {
-                1.0
-            }
-            * (camera_state.height / CAMERA_DEFAULT_HEIGHT).clamp(0.50, 2.80);
-        camera_state.center += movement.normalize() * speed * time.delta_secs();
+        if movement.length_squared() > 0.0 {
+            let speed = CAMERA_MOVE_SPEED
+                * if keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+                    CAMERA_FAST_MULTIPLIER
+                } else {
+                    1.0
+                }
+                * (camera_state.height / CAMERA_DEFAULT_HEIGHT).clamp(0.50, 2.80);
+            camera_state.center += movement.normalize() * speed * time.delta_secs();
+        }
     }
 
     if keyboard.pressed(KeyCode::KeyQ) {
@@ -164,13 +176,14 @@ pub fn control_viewer_camera(
     let Ok(mut transform) = camera_query.single_mut() else {
         return;
     };
-    apply_viewer_camera_transform(world.settings, &camera_state, &mut transform);
+    apply_viewer_camera_transform(world.settings, &camera_state, &mut transform, player_state.current_y);
 }
 
 pub fn apply_viewer_camera_transform(
     settings: VoxelWorldSettings,
     camera: &VoxelViewerCamera,
     transform: &mut Transform,
+    target_y: f32,
 ) {
     let surface_y = voxel_surface_y_at(
         settings,
@@ -178,9 +191,10 @@ pub fn apply_viewer_camera_transform(
         camera.center.y,
         VoxelSurfaceMeshStyle::viewer(),
     );
+    let focus_y = target_y.min(surface_y);
     let target = Vec3::new(
         camera.center.x * BLOCK_SIZE,
-        surface_y + SURFACE_TARGET_Y_OFFSET,
+        focus_y + SURFACE_TARGET_Y_OFFSET,
         camera.center.y * BLOCK_SIZE,
     );
 
@@ -299,6 +313,7 @@ pub fn viewer_weather_scene(weather: VoxelWeather) -> ViewerWeatherScene {
 pub fn sync_visible_chunks(
     world: Res<VoxelViewerWorld>,
     camera: Res<VoxelViewerCamera>,
+    edits_res: Option<Res<VoxelWorldEdits>>,
     primary_window: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut loaded: ResMut<LoadedVoxelChunks>,
     mut render_assets: ResMut<VoxelViewerRenderAssets>,
@@ -336,7 +351,12 @@ pub fn sync_visible_chunks(
             continue;
         }
 
-        let chunk = generate_voxel_chunk(world.settings, coord);
+        let chunk = if let Some(ref edits_res) = edits_res {
+            generate_edited_voxel_chunk(world.settings, coord, &edits_res.edits)
+        } else {
+            generate_voxel_chunk(world.settings, coord)
+        };
+
         let mesh_step = chunk_mesh_step(camera.height, center_coord, coord);
         let mesh = voxel_chunk_surface_mesh(world.settings, &chunk, mesh_step);
         let entity = commands
@@ -404,9 +424,9 @@ pub fn shared_terrain_material(
         .terrain_material
         .get_or_insert_with(|| {
             materials.add(StandardMaterial {
-                base_color: Color::WHITE,
+                base_color: Color::srgb(0.2, 0.88, 0.38), // عشب زاهٍ ومبهج
                 unlit: false,
-                perceptual_roughness: 0.96,
+                perceptual_roughness: 0.85,
                 metallic: 0.0,
                 ..default()
             })

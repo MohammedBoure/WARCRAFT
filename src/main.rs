@@ -1,14 +1,23 @@
+mod caves;
 mod config;
 mod controls;
+mod interaction;
+mod player;
 mod state;
 mod ui;
+mod water;
 mod world;
 
 use std::env;
 use bevy::prelude::*;
+use crate::caves::*;
+use crate::config::*;
 use crate::controls::*;
+use crate::interaction::*;
+use crate::player::*;
 use crate::state::*;
 use crate::ui::*;
+use crate::water::*;
 use crate::world::*;
 
 fn main() {
@@ -38,26 +47,40 @@ fn main() {
         .insert_resource(VoxelViewerLiveControls::from_composition(
             initial_composition,
         ))
+        .init_resource::<PlayerState>()
+        .init_resource::<VoxelWorldEdits>()
         .init_resource::<VoxelGenerationDialogState>()
         .init_resource::<VoxelViewerWeatherState>()
         .init_resource::<LoadedVoxelChunks>()
         .init_resource::<VoxelViewerRenderAssets>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Astra Voxel World Viewer".to_string(),
+                title: "Astra Voxel World // Minecraft Survival & Digging Engine".to_string(),
                 resolution: (1440, 900).into(),
                 ..default()
             }),
             ..default()
         }))
-        .add_systems(Startup, setup_viewer_scene)
+        .add_systems(
+            Startup,
+            (
+                setup_viewer_scene,
+                spawn_player_character,
+                setup_flowing_water_material,
+            ),
+        )
         .add_systems(
             Update,
             (
+                update_player_movement,
+                handle_voxel_digging_and_building,
+                cycle_build_block_kind,
+                animate_flowing_water_system,
+                update_cave_transparency_system,
                 handle_generation_dialog_buttons,
                 handle_generation_dialog_keyboard_input,
                 control_world_generation,
-                control_viewer_camera,
+                control_viewer_camera.after(update_player_movement),
                 update_viewer_weather_scene,
                 sync_visible_chunks,
                 update_generation_dialog_ui,
