@@ -29,6 +29,14 @@ fn main() {
 
     let initial_composition = options.composition;
     App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "حديقة الفوكسل السحرية // مغامرة الاستكشاف والحفر والتعدين".to_string(),
+                resolution: (1440, 900).into(),
+                ..default()
+            }),
+            ..default()
+        }))
         .init_state::<AppState>()
         .insert_resource(ClearColor(Color::srgb(0.04, 0.08, 0.14)))
         .insert_resource(VoxelViewerWorld {
@@ -49,14 +57,6 @@ fn main() {
         .init_resource::<VoxelViewerWeatherState>()
         .init_resource::<LoadedVoxelChunks>()
         .init_resource::<VoxelViewerRenderAssets>()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "حديقة الفوكسل السحرية // مغامرة الاستكشاف والحفر والتعدين".to_string(),
-                resolution: (1440, 900).into(),
-                ..default()
-            }),
-            ..default()
-        }))
         .add_systems(
             Startup,
             (
