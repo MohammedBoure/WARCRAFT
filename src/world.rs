@@ -62,17 +62,17 @@ pub fn setup_viewer_scene(
             ..Bloom::NATURAL
         },
         DistanceFog {
-            color: Color::srgba(0.08, 0.16, 0.19, 1.0),
-            directional_light_color: Color::srgb(0.72, 0.48, 0.24),
+            color: Color::srgba(0.34, 0.43, 0.55, 1.0),
+            directional_light_color: Color::srgb(1.0, 0.94, 0.82),
             directional_light_exponent: 12.0,
             falloff: FogFalloff::Linear {
-                start: 125.0,
-                end: 540.0,
+                start: 180.0,
+                end: 650.0,
             },
         },
         AmbientLight {
-            color: Color::srgb(0.24, 0.36, 0.40),
-            brightness: 260.0,
+            color: Color::srgb(0.60, 0.68, 0.76),
+            brightness: 650.0,
             ..default()
         },
         camera_transform,
@@ -121,13 +121,14 @@ pub fn control_viewer_camera(
     mut mouse_wheel: MessageReader<MouseWheel>,
     time: Res<Time>,
     preferences: Res<GamePreferences>,
+    session: Res<GameSession>,
     player_state: Res<PlayerState>,
     mut camera_state: ResMut<VoxelViewerCamera>,
     mut camera_query: Query<(&mut Transform, &mut Projection), With<VoxelViewerCameraTag>>,
     player_query: Query<&Transform, (With<PlayerTag>, Without<VoxelViewerCameraTag>)>,
 ) {
     let interactive = matches!(app_state.get(), AppState::Playing);
-    if matches!(app_state.get(), AppState::MainMenu | AppState::Loading) {
+    if matches!(app_state.get(), AppState::MainMenu | AppState::RouteChoice | AppState::Loading) {
         camera_state.yaw += time.delta_secs() * 0.055;
     }
 
@@ -155,7 +156,10 @@ pub fn control_viewer_camera(
             MouseScrollUnit::Pixel => event.y * 0.08,
         };
     }
-    if interactive && scroll.abs() > f32::EPSILON {
+    if interactive
+        && session.loadout.selected_tool != ToolSlot::Builder
+        && scroll.abs() > f32::EPSILON
+    {
         camera_state.height = (camera_state.height * (1.0 - scroll * 0.09))
             .clamp(CAMERA_MIN_HEIGHT, CAMERA_MAX_HEIGHT);
     }
@@ -221,79 +225,37 @@ pub fn apply_viewer_camera_transform(
 
 pub fn update_world_mood(
     session: Res<GameSession>,
-    time: Res<Time>,
     mut clear_color: ResMut<ClearColor>,
     mut camera_query: Query<(&mut AmbientLight, &mut DistanceFog), With<VoxelViewerCameraTag>>,
     mut sun_query: Query<&mut DirectionalLight, With<VoxelViewerSunTag>>,
-    mut overlay_query: Query<&mut BackgroundColor, With<VoxelViewerWeatherOverlay>>,
 ) {
-    let (sky, ambient, brightness, sun_color, sun_lux, fog, fog_start, fog_end, overlay) =
-        match session.risk_band() {
-            RiskBand::Calm => (
-                Color::srgb(0.055, 0.13, 0.17),
-                Color::srgb(0.24, 0.36, 0.40),
-                260.0,
-                Color::srgb(1.0, 0.78, 0.50),
-                14_000.0,
-                Color::srgb(0.08, 0.16, 0.19),
-                125.0,
-                540.0,
-                Color::NONE,
-            ),
-            RiskBand::Warning => (
-                Color::srgb(0.16, 0.105, 0.075),
-                Color::srgb(0.38, 0.27, 0.17),
-                220.0,
-                Color::srgb(1.0, 0.52, 0.20),
-                11_000.0,
-                Color::srgb(0.20, 0.12, 0.075),
-                110.0,
-                470.0,
-                Color::srgba(0.55, 0.20, 0.04, 0.018),
-            ),
-            RiskBand::Critical => (
-                Color::srgb(0.085, 0.045, 0.14),
-                Color::srgb(0.23, 0.14, 0.31),
-                170.0,
-                Color::srgb(1.0, 0.25, 0.17),
-                8_000.0,
-                Color::srgb(0.115, 0.055, 0.15),
-                95.0,
-                410.0,
-                Color::srgba(0.38, 0.015, 0.09, 0.05),
-            ),
-            RiskBand::Terminal => {
-                let pulse = (time.elapsed_secs() * 5.0).sin() * 0.5 + 0.5;
-                (
-                    Color::srgb(0.035 + pulse * 0.025, 0.012, 0.03),
-                    Color::srgb(0.20, 0.055, 0.085),
-                    125.0,
-                    Color::srgb(1.0, 0.08 + pulse * 0.10, 0.055),
-                    6_000.0,
-                    Color::srgb(0.075, 0.018, 0.045),
-                    80.0,
-                    350.0,
-                    Color::srgba(0.56, 0.0, 0.055, 0.07 + pulse * 0.055),
-                )
-            }
-        };
-
+    let invaded = session.route == PlanetRoute::InvadedPlanet;
+    let (sky, ambient_color, ambient_power, sun_color, sun_power) = if invaded {
+        (
+            Color::srgb(0.09, 0.065, 0.14),
+            Color::srgb(0.34, 0.30, 0.46),
+            430.0,
+            Color::srgb(0.92, 0.66, 0.74),
+            11_500.0,
+        )
+    } else {
+        (
+            Color::srgb(0.24, 0.32, 0.40),
+            Color::srgb(0.52, 0.60, 0.68),
+            540.0,
+            Color::srgb(1.0, 0.88, 0.70),
+            14_000.0,
+        )
+    };
     clear_color.0 = sky;
-    if let Ok((mut ambient_light, mut distance_fog)) = camera_query.single_mut() {
-        ambient_light.color = ambient;
-        ambient_light.brightness = brightness;
-        distance_fog.color = fog;
-        distance_fog.falloff = FogFalloff::Linear {
-            start: fog_start,
-            end: fog_end,
-        };
+    if let Ok((mut ambient, mut fog)) = camera_query.single_mut() {
+        ambient.color = ambient_color;
+        ambient.brightness = ambient_power;
+        fog.color = sky.with_alpha(1.0);
     }
     if let Ok(mut sun) = sun_query.single_mut() {
         sun.color = sun_color;
-        sun.illuminance = sun_lux;
-    }
-    if let Ok(mut color) = overlay_query.single_mut() {
-        color.0 = overlay;
+        sun.illuminance = sun_power;
     }
 }
 pub fn sync_visible_chunks(

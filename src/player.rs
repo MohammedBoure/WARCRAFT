@@ -3,7 +3,6 @@ use std::time::Duration;
 use astra_voxel_world::prelude::*;
 use bevy::prelude::*;
 
-use crate::gameplay::RunLifecycle;
 use crate::state::*;
 
 const PLAYER_HALF_HEIGHT: f32 = 2.1;
@@ -195,15 +194,10 @@ pub fn update_warden_animation(
     }
 }
 pub fn reset_player_for_run(
-    lifecycle: Res<RunLifecycle>,
     world: Res<VoxelViewerWorld>,
-    mut session: ResMut<GameSession>,
     mut player_state: ResMut<PlayerState>,
     mut player: Query<(&mut Transform, &mut Visibility), With<PlayerTag>>,
 ) {
-    if lifecycle.active {
-        return;
-    }
     let Ok((mut transform, mut visibility)) = player.single_mut() else {
         return;
     };
@@ -220,7 +214,6 @@ pub fn reset_player_for_run(
         current_y: spawn.y,
         ..default()
     };
-    session.reset(spawn);
 }
 
 pub fn sync_player_visibility(
@@ -230,7 +223,7 @@ pub fn sync_player_visibility(
     let Ok(mut visibility) = player.single_mut() else {
         return;
     };
-    *visibility = if matches!(state.get(), AppState::Loading | AppState::MainMenu) {
+    *visibility = if matches!(state.get(), AppState::Loading | AppState::MainMenu | AppState::RouteChoice) {
         Visibility::Hidden
     } else {
         Visibility::Visible
@@ -243,10 +236,8 @@ pub fn update_player_movement(
     world: Res<VoxelViewerWorld>,
     loaded: Res<LoadedVoxelChunks>,
     camera: Res<VoxelViewerCamera>,
-    balance: Res<BalanceConfig>,
     mut session: ResMut<GameSession>,
     mut player_state: ResMut<PlayerState>,
-    mut criticality_events: MessageWriter<CriticalityChanged>,
     mut player_query: Query<&mut Transform, With<PlayerTag>>,
 ) {
     let Ok(mut transform) = player_query.single_mut() else {
@@ -392,8 +383,6 @@ pub fn update_player_movement(
         player_state.vertical_speed = 0.0;
         player_state.grounded = false;
         player_state.coyote_timer = 0.0;
-        session.add_criticality(balance.fall_risk);
-        criticality_events.write(CriticalityChanged(session.criticality));
     }
 
     transform.translation = next;
@@ -410,18 +399,11 @@ fn move_towards(current: Vec3, target: Vec3, max_delta: f32) -> Vec3 {
     }
 }
 pub fn animate_player(
-    session: Res<GameSession>,
     mut lamps: Query<&mut SpotLight, With<WardenLamp>>,
 ) {
-    let (color, intensity) = match session.risk_band() {
-        RiskBand::Calm => (Color::srgb(0.32, 0.82, 0.92), 32_000.0),
-        RiskBand::Warning => (Color::srgb(0.95, 0.56, 0.16), 36_000.0),
-        RiskBand::Critical => (Color::srgb(0.86, 0.18, 0.25), 40_000.0),
-        RiskBand::Terminal => (Color::srgb(1.0, 0.05, 0.08), 44_000.0),
-    };
     for mut lamp in &mut lamps {
-        lamp.color = color;
-        lamp.intensity = intensity;
+        lamp.color = Color::srgb(1.0, 0.95, 0.85);
+        lamp.intensity = 35_000.0;
     }
 }
 fn ground_world_y(
