@@ -162,8 +162,14 @@ pub fn handle_main_menu_interactions(
     mut world_res: ResMut<VoxelViewerWorld>,
     mut loaded: ResMut<LoadedVoxelChunks>,
     mut commands: Commands,
-    mut preset_buttons: Query<(&Interaction, &PresetOptionButton, &mut BackgroundColor, &mut BorderColor), Changed<Interaction>>,
-    mut start_buttons: Query<(&Interaction, &mut BackgroundColor), (With<StartGameButton>, Changed<Interaction>)>,
+    mut preset_buttons: Query<
+        (&Interaction, &PresetOptionButton, &mut BackgroundColor, &mut BorderColor),
+        (With<PresetOptionButton>, Without<StartGameButton>, Changed<Interaction>),
+    >,
+    mut start_buttons: Query<
+        (&Interaction, &mut BackgroundColor),
+        (With<StartGameButton>, Without<PresetOptionButton>, Changed<Interaction>),
+    >,
 ) {
     for (interaction, preset_btn, mut bg_color, mut border_color) in &mut preset_buttons {
         match *interaction {

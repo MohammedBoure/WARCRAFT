@@ -56,7 +56,7 @@ pub fn setup_target_highlight(
 
 pub fn update_target_block_highlight(
     mut edits_res: ResMut<VoxelWorldEdits>,
-    player_query: Query<&Transform, With<PlayerTag>>,
+    player_query: Query<&Transform, (With<PlayerTag>, Without<TargetBlockHighlightTag>)>,
     mut highlight_query: Query<(&mut Transform, &mut Visibility), (With<TargetBlockHighlightTag>, Without<PlayerTag>)>,
 ) {
     let Ok(player_transform) = player_query.single() else {
