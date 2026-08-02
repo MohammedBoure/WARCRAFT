@@ -23,6 +23,9 @@ const TURN_RESPONSE: f32 = 15.0;
 #[derive(Component)]
 pub struct PlayerTag;
 
+#[derive(Component)]
+pub struct PlayerModelRoot;
+
 const WARDEN_MODEL: &str = "models/kenney-blocky/warden.glb";
 
 #[derive(Resource)]
@@ -111,6 +114,7 @@ pub fn spawn_player_character(
         .with_children(|parent| {
             parent.spawn((
                 Name::new("Kenney Blocky Warden"),
+                PlayerModelRoot,
                 SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(WARDEN_MODEL))),
                 Transform {
                     translation: Vec3::new(0.0, -PLAYER_HALF_HEIGHT, 0.0),
@@ -223,7 +227,10 @@ pub fn sync_player_visibility(
     let Ok(mut visibility) = player.single_mut() else {
         return;
     };
-    *visibility = if matches!(state.get(), AppState::Loading | AppState::MainMenu | AppState::RouteChoice) {
+    *visibility = if matches!(
+        state.get(),
+        AppState::Loading | AppState::MainMenu | AppState::RouteChoice
+    ) {
         Visibility::Hidden
     } else {
         Visibility::Visible
@@ -398,9 +405,7 @@ fn move_towards(current: Vec3, target: Vec3, max_delta: f32) -> Vec3 {
         current + delta / distance * max_delta
     }
 }
-pub fn animate_player(
-    mut lamps: Query<&mut SpotLight, With<WardenLamp>>,
-) {
+pub fn animate_player(mut lamps: Query<&mut SpotLight, With<WardenLamp>>) {
     for mut lamp in &mut lamps {
         lamp.color = Color::srgb(1.0, 0.95, 0.85);
         lamp.intensity = 35_000.0;

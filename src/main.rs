@@ -63,7 +63,10 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(AssetPlugin { file_path: asset_root(), ..default() }),
+                .set(AssetPlugin {
+                    file_path: asset_root(),
+                    ..default()
+                }),
         )
         .init_state::<AppState>()
         .insert_resource(ClearColor(Color::srgb(0.025, 0.055, 0.075)))
@@ -120,16 +123,31 @@ fn main() {
         .add_systems(OnEnter(AppState::Loading), menu::setup_loading_screen)
         .add_systems(Update, finish_loading.run_if(in_state(AppState::Loading)))
         .add_systems(OnExit(AppState::Loading), menu::cleanup_screen)
-        .add_systems(OnEnter(AppState::MainMenu), (enter_main_menu, setup_main_menu).chain())
-        .add_systems(Update, handle_menu_buttons.run_if(in_state(AppState::MainMenu)))
+        .add_systems(
+            OnEnter(AppState::MainMenu),
+            (enter_main_menu, setup_main_menu).chain(),
+        )
+        .add_systems(
+            Update,
+            handle_menu_buttons.run_if(in_state(AppState::MainMenu)),
+        )
         .add_systems(OnExit(AppState::MainMenu), menu::cleanup_screen)
         .add_systems(OnEnter(AppState::RouteChoice), setup_route_choice)
-        .add_systems(Update, handle_route_buttons.run_if(in_state(AppState::RouteChoice)))
+        .add_systems(
+            Update,
+            handle_route_buttons.run_if(in_state(AppState::RouteChoice)),
+        )
         .add_systems(OnExit(AppState::RouteChoice), menu::cleanup_screen)
-        .add_systems(OnEnter(AppState::Playing), (prepare_new_run, reset_player_for_run).chain())
+        .add_systems(
+            OnEnter(AppState::Playing),
+            (prepare_new_run, reset_player_for_run).chain(),
+        )
         .add_systems(OnEnter(AppState::Paused), setup_pause_overlay)
         .add_systems(OnExit(AppState::Paused), menu::cleanup_screen)
-        .add_systems(OnEnter(AppState::FinalDecision), setup_final_decision_overlay)
+        .add_systems(
+            OnEnter(AppState::FinalDecision),
+            setup_final_decision_overlay,
+        )
         .add_systems(OnExit(AppState::FinalDecision), menu::cleanup_screen)
         .add_systems(OnEnter(AppState::Ending), setup_ending_overlay)
         .add_systems(OnExit(AppState::Ending), menu::cleanup_screen)
@@ -147,10 +165,7 @@ fn main() {
             )
                 .chain(),
         )
-        .add_systems(
-            Update,
-            sync_visible_chunks.in_set(GameUpdateSet::World),
-        )
+        .add_systems(Update, sync_visible_chunks.in_set(GameUpdateSet::World))
         .add_systems(
             Update,
             (
@@ -204,6 +219,8 @@ fn main() {
                 update_warden_animation,
                 animate_player,
                 sync_player_weapon_visual,
+                update_weapon_recoil,
+                update_combat_effects,
                 sync_player_visibility,
                 update_world_mood,
                 update_hud,

@@ -5,6 +5,7 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use crate::combat::CombatTarget;
 use crate::player::PlayerTag;
 use crate::state::*;
 use crate::world::invalidate_edit;
@@ -67,8 +68,24 @@ pub fn setup_target_highlight(
         unlit: true,
         ..default()
     });
-    spawn_highlight_frame(&mut commands, &x_bar, &y_bar, &z_bar, mining_material, "Mining Target", TargetBlockHighlightTag);
-    spawn_highlight_frame(&mut commands, &x_bar, &y_bar, &z_bar, build_material, "Build Preview", PlacementBlockHighlightTag);
+    spawn_highlight_frame(
+        &mut commands,
+        &x_bar,
+        &y_bar,
+        &z_bar,
+        mining_material,
+        "Mining Target",
+        TargetBlockHighlightTag,
+    );
+    spawn_highlight_frame(
+        &mut commands,
+        &x_bar,
+        &y_bar,
+        &z_bar,
+        build_material,
+        "Build Preview",
+        PlacementBlockHighlightTag,
+    );
 }
 
 fn spawn_highlight_frame(
@@ -82,28 +99,42 @@ fn spawn_highlight_frame(
 ) {
     let half_x = BLOCK_SIZE * 0.52;
     let half_y = HEIGHT_SCALE * 0.54;
-    commands.spawn((
-        Name::new(name),
-        Transform::from_xyz(0.0, -500.0, 0.0),
-        Visibility::Hidden,
-        marker,
-    )).with_children(|parent| {
-        for y in [-half_y, half_y] {
-            for z in [-half_x, half_x] {
-                parent.spawn((Mesh3d(x_bar.clone()), MeshMaterial3d(material.clone()), Transform::from_xyz(0.0, y, z)));
-            }
-        }
-        for x in [-half_x, half_x] {
-            for z in [-half_x, half_x] {
-                parent.spawn((Mesh3d(y_bar.clone()), MeshMaterial3d(material.clone()), Transform::from_xyz(x, 0.0, z)));
-            }
-        }
-        for x in [-half_x, half_x] {
+    commands
+        .spawn((
+            Name::new(name),
+            Transform::from_xyz(0.0, -500.0, 0.0),
+            Visibility::Hidden,
+            marker,
+        ))
+        .with_children(|parent| {
             for y in [-half_y, half_y] {
-                parent.spawn((Mesh3d(z_bar.clone()), MeshMaterial3d(material.clone()), Transform::from_xyz(x, y, 0.0)));
+                for z in [-half_x, half_x] {
+                    parent.spawn((
+                        Mesh3d(x_bar.clone()),
+                        MeshMaterial3d(material.clone()),
+                        Transform::from_xyz(0.0, y, z),
+                    ));
+                }
             }
-        }
-    });
+            for x in [-half_x, half_x] {
+                for z in [-half_x, half_x] {
+                    parent.spawn((
+                        Mesh3d(y_bar.clone()),
+                        MeshMaterial3d(material.clone()),
+                        Transform::from_xyz(x, 0.0, z),
+                    ));
+                }
+            }
+            for x in [-half_x, half_x] {
+                for y in [-half_y, half_y] {
+                    parent.spawn((
+                        Mesh3d(z_bar.clone()),
+                        MeshMaterial3d(material.clone()),
+                        Transform::from_xyz(x, y, 0.0),
+                    ));
+                }
+            }
+        });
 }
 
 pub fn handle_tool_selection(
@@ -149,7 +180,10 @@ fn cycle_build_block(loadout: &mut PlayerLoadout, direction: i32) {
     if available.is_empty() {
         return;
     }
-    let current = available.iter().position(|kind| *kind == loadout.selected_block).unwrap_or(0) as i32;
+    let current = available
+        .iter()
+        .position(|kind| *kind == loadout.selected_block)
+        .unwrap_or(0) as i32;
     let next = (current + direction).rem_euclid(available.len() as i32) as usize;
     loadout.selected_block = available[next];
 }
@@ -158,43 +192,103 @@ pub fn compute_aim_solution(
     primary_window: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &Transform), With<VoxelViewerCameraTag>>,
     ui_buttons: Query<&Interaction, With<Button>>,
+    targets: Query<(Entity, &GlobalTransform, &CombatTarget)>,
     loaded: Res<LoadedVoxelChunks>,
     mut aim: ResMut<AimSolution>,
 ) {
-    aim.pointer_over_ui = ui_buttons.iter().any(|interaction| *interaction != Interaction::None);
+    aim.pointer_over_ui = ui_buttons
+        .iter()
+        .any(|interaction| *interaction != Interaction::None);
     aim.voxel = None;
     aim.enemy = None;
     aim.world_point = None;
     if aim.pointer_over_ui {
         return;
     }
-    let Some(cursor) = primary_window.single().ok().and_then(Window::cursor_position) else { return; };
-    let Some((camera, transform)) = camera_query.single().ok() else { return; };
+    let Some(cursor) = primary_window
+        .single()
+        .ok()
+        .and_then(Window::cursor_position)
+    else {
+        return;
+    };
+    let Some((camera, transform)) = camera_query.single().ok() else {
+        return;
+    };
     let current_camera = GlobalTransform::from(*transform);
-    let Ok(ray) = camera.viewport_to_world(&current_camera, cursor) else { return; };
+    let Ok(ray) = camera.viewport_to_world(&current_camera, cursor) else {
+        return;
+    };
     let origin = ray.origin;
     let direction = *ray.direction;
 
     let voxel = voxel_raycast_loaded(&loaded, origin, direction, INTERACTION_DISTANCE);
     aim.voxel = voxel;
     aim.world_point = voxel.map(|hit| block_world_center(hit.block));
+    let mut closest_distance = aim
+        .world_point
+        .map(|point| point.distance(origin))
+        .unwrap_or(INTERACTION_DISTANCE);
+    for (entity, transform, target) in &targets {
+        if !target.targetable {
+            continue;
+        }
+        let Some(distance) =
+            ray_sphere_distance(origin, direction, transform.translation(), target.radius)
+        else {
+            continue;
+        };
+        if distance <= closest_distance && distance <= INTERACTION_DISTANCE {
+            closest_distance = distance;
+            aim.enemy = Some(entity);
+            aim.world_point = Some(origin + direction * distance);
+        }
+    }
 }
 
 pub fn update_target_highlights(
     session: Res<GameSession>,
     aim: Res<AimSolution>,
-    player: Query<&Transform, With<PlayerTag>>,
+    player: Query<
+        &Transform,
+        (
+            With<PlayerTag>,
+            Without<TargetBlockHighlightTag>,
+            Without<PlacementBlockHighlightTag>,
+        ),
+    >,
     loaded: Res<LoadedVoxelChunks>,
     mining: Res<MiningState>,
-    mut delete_highlight: Query<(&mut Transform, &mut Visibility), (With<TargetBlockHighlightTag>, Without<PlacementBlockHighlightTag>)>,
-    mut placement_highlight: Query<(&mut Transform, &mut Visibility), (With<PlacementBlockHighlightTag>, Without<TargetBlockHighlightTag>)>,
+    mut delete_highlight: Query<
+        (&mut Transform, &mut Visibility),
+        (
+            With<TargetBlockHighlightTag>,
+            Without<PlacementBlockHighlightTag>,
+            Without<PlayerTag>,
+        ),
+    >,
+    mut placement_highlight: Query<
+        (&mut Transform, &mut Visibility),
+        (
+            With<PlacementBlockHighlightTag>,
+            Without<TargetBlockHighlightTag>,
+            Without<PlayerTag>,
+        ),
+    >,
 ) {
-    let Ok((mut delete_transform, mut delete_visibility)) = delete_highlight.single_mut() else { return; };
-    let Ok((mut placement_transform, mut placement_visibility)) = placement_highlight.single_mut() else { return; };
+    let Ok((mut delete_transform, mut delete_visibility)) = delete_highlight.single_mut() else {
+        return;
+    };
+    let Ok((mut placement_transform, mut placement_visibility)) = placement_highlight.single_mut()
+    else {
+        return;
+    };
     *delete_visibility = Visibility::Hidden;
     *placement_visibility = Visibility::Hidden;
 
-    let Some(hit) = aim.voxel else { return; };
+    let Some(hit) = aim.voxel else {
+        return;
+    };
     match session.loadout.selected_tool {
         ToolSlot::MiningLaser => {
             delete_transform.translation = block_world_center(hit.block);
@@ -235,12 +329,16 @@ pub fn handle_voxel_actions(
     }
     match session.loadout.selected_tool {
         ToolSlot::Builder if mouse.just_pressed(MouseButton::Left) => {
-            let Some(position) = aim.voxel.and_then(|hit| hit.placement) else { return; };
+            let Some(position) = aim.voxel.and_then(|hit| hit.placement) else {
+                return;
+            };
             if !valid_placement(position, &loaded, &player) {
                 return;
             }
             let block = session.loadout.selected_block;
-            edits.edits.push(VoxelTerrainEdit::SetBlock { position, block });
+            edits
+                .edits
+                .push(VoxelTerrainEdit::SetBlock { position, block });
             edits.placed_durability.insert(position, 120.0);
             session.loadout.blocks_placed = session.loadout.blocks_placed.saturating_add(1);
             invalidate_edit(&mut commands, &mut loaded, position, 1);
@@ -257,7 +355,10 @@ pub fn handle_voxel_actions(
                 mining.progress = 0.0;
                 return;
             };
-            if matches!(hit.kind, BlockKind::Bedrock | BlockKind::Water | BlockKind::Lava) {
+            if matches!(
+                hit.kind,
+                BlockKind::Bedrock | BlockKind::Water | BlockKind::Lava
+            ) {
                 return;
             }
             if mining.target != Some(hit.block) {
@@ -268,7 +369,10 @@ pub fn handle_voxel_actions(
             if mining.progress < 1.0 {
                 return;
             }
-            edits.edits.push(VoxelTerrainEdit::SetBlock { position: hit.block, block: BlockKind::Air });
+            edits.edits.push(VoxelTerrainEdit::SetBlock {
+                position: hit.block,
+                block: BlockKind::Air,
+            });
             edits.placed_durability.remove(&hit.block);
             invalidate_edit(&mut commands, &mut loaded, hit.block, 1);
             if let Some(resource) = ResourceKind::from_block(hit.kind) {
@@ -291,16 +395,18 @@ pub fn handle_voxel_actions(
     }
 }
 
-fn valid_placement(
+fn valid_placement<F: bevy::ecs::query::QueryFilter>(
     position: VoxelBlockPosition,
     loaded: &LoadedVoxelChunks,
-    player: &Query<&Transform, With<PlayerTag>>,
+    player: &Query<&Transform, F>,
 ) -> bool {
     if loaded.block_at(position).is_some_and(BlockKind::is_solid) {
         return false;
     }
     let center = block_world_center(position);
-    !player.single().is_ok_and(|transform| transform.translation.distance(center) < BLOCK_SIZE * 1.15)
+    !player
+        .single()
+        .is_ok_and(|transform| transform.translation.distance(center) < BLOCK_SIZE * 1.15)
 }
 
 fn ray_sphere_distance(origin: Vec3, direction: Vec3, center: Vec3, radius: f32) -> Option<f32> {
@@ -313,7 +419,13 @@ fn ray_sphere_distance(origin: Vec3, direction: Vec3, center: Vec3, radius: f32)
     }
     let near = -b - discriminant.sqrt();
     let far = -b + discriminant.sqrt();
-    if near >= 0.0 { Some(near) } else if far >= 0.0 { Some(far) } else { None }
+    if near >= 0.0 {
+        Some(near)
+    } else if far >= 0.0 {
+        Some(far)
+    } else {
+        None
+    }
 }
 
 pub fn voxel_raycast_loaded(
@@ -323,18 +435,26 @@ pub fn voxel_raycast_loaded(
     max_distance: f32,
 ) -> Option<VoxelHit> {
     let direction = direction.normalize_or_zero();
-    if direction == Vec3::ZERO { return None; }
+    if direction == Vec3::ZERO {
+        return None;
+    }
     let mut previous_air = None;
     let mut previous_position = None;
     let steps = (max_distance / RAY_STEP).ceil() as usize;
     for step in 0..=steps {
         let point = origin + direction * (step as f32 * RAY_STEP);
         let position = world_to_block(point);
-        if previous_position == Some(position) { continue; }
+        if previous_position == Some(position) {
+            continue;
+        }
         previous_position = Some(position);
         match loaded.block_at(position) {
             Some(kind) if kind.is_solid() => {
-                return Some(VoxelHit { block: position, placement: previous_air, kind });
+                return Some(VoxelHit {
+                    block: position,
+                    placement: previous_air,
+                    kind,
+                });
             }
             _ => previous_air = Some(position),
         }
@@ -364,7 +484,10 @@ mod tests {
 
     #[test]
     fn zero_direction_never_hits() {
-        assert!(voxel_raycast_loaded(&LoadedVoxelChunks::default(), Vec3::ZERO, Vec3::ZERO, 10.0).is_none());
+        assert!(
+            voxel_raycast_loaded(&LoadedVoxelChunks::default(), Vec3::ZERO, Vec3::ZERO, 10.0)
+                .is_none()
+        );
     }
 
     #[test]
