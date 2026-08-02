@@ -74,7 +74,7 @@ pub fn spawn_generation_dialog(commands: &mut Commands) {
             ))
             .with_children(|panel| {
                 panel.spawn((
-                    Text::new("GENERATION ARGUMENTS"),
+                    Text::new("إعدادات العالم الفوكسلي"),
                     TextFont {
                         font_size: 18.0,
                         ..default()
@@ -83,7 +83,7 @@ pub fn spawn_generation_dialog(commands: &mut Commands) {
                 ));
                 panel.spawn((
                     Text::new(
-                        "Edit the same values passed to VoxelWorldSettings, then Apply. Esc cancels.",
+                        "قم بتعديل قيم التوليد البرمجي ثم اضغط تطبيق (Apply). اضغط Esc للإلغاء.",
                     ),
                     TextFont {
                         font_size: 13.0,
@@ -135,12 +135,12 @@ pub fn spawn_generation_dialog(commands: &mut Commands) {
                         spawn_generation_dialog_button(
                             row,
                             VoxelGenerationDialogAction::Apply,
-                            "APPLY",
+                            "تطبيق (APPLY)",
                         );
                         spawn_generation_dialog_button(
                             row,
                             VoxelGenerationDialogAction::Cancel,
-                            "CANCEL",
+                            "إلغاء (CANCEL)",
                         );
                     });
             });
@@ -165,7 +165,7 @@ pub fn handle_generation_dialog_buttons(
                 dialog.open = true;
                 dialog.buffer = generation_arguments_text(world.settings, world.load_radius);
                 dialog.status =
-                    "Type argument values, then click APPLY or press Ctrl+Enter.".to_string();
+                    "اكتب القيم البرمجية ثم انقر فوق تطبيق.".to_string();
             }
             VoxelGenerationDialogAction::Apply => {
                 apply_generation_dialog_buffer(
@@ -178,7 +178,7 @@ pub fn handle_generation_dialog_buttons(
             }
             VoxelGenerationDialogAction::Cancel => {
                 dialog.open = false;
-                dialog.status = "Dialog cancelled.".to_string();
+                dialog.status = "تم إلغاء النافذة.".to_string();
             }
         }
     }
@@ -206,7 +206,7 @@ pub fn handle_generation_dialog_keyboard_input(
         match event.key_code {
             KeyCode::Escape => {
                 dialog.open = false;
-                dialog.status = "Dialog cancelled.".to_string();
+                dialog.status = "تم إلغاء النافذة.".to_string();
             }
             KeyCode::Enter | KeyCode::NumpadEnter
                 if keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]) =>
@@ -258,10 +258,10 @@ pub fn apply_generation_dialog_buffer(
             controls.last_change = "dialog apply".to_string();
             reload_loaded_chunks(commands, loaded);
             dialog.open = false;
-            dialog.status = "Applied generation arguments.".to_string();
+            dialog.status = "تم تطبيق إعدادات العالم بنجاح.".to_string();
         }
         Err(error) => {
-            dialog.status = format!("Error: {error}");
+            dialog.status = format!("خطأ: {error}");
         }
     }
 }
@@ -331,32 +331,35 @@ pub fn update_generation_hud(
 }
 
 pub fn generation_hud_text(
-    world: &VoxelViewerWorld,
-    controls: &VoxelViewerLiveControls,
+    _world: &VoxelViewerWorld,
+    _controls: &VoxelViewerLiveControls,
     weather_state: &VoxelViewerWeatherState,
     active_chunks: usize,
 ) -> String {
-    let settings = world.settings;
-    let preset = VIEWER_PRESETS[controls.preset_index];
-    let biome = controls
-        .forced_biome_index
-        .map(|index| VoxelBiome::ALL[index].name())
-        .unwrap_or("mixed");
-    let weather = controls
-        .forced_weather_index
-        .map(|index| VoxelWeather::ALL[index].name())
-        .unwrap_or("mixed");
-    let numeric_input = LiveNumericInput::ALL[controls.numeric_input_index];
+    let local_biome = match weather_state.biome {
+        VoxelBiome::Plains => "المراعي الخضراء 🌿",
+        VoxelBiome::Forest => "الغابة السحرية 🌲",
+        VoxelBiome::Desert => "الصحراء الذهبية 🏜️",
+        VoxelBiome::Tundra => "السهول الثلجية ❄️",
+        VoxelBiome::Mountains => "الجبال المرتفعة 🏔️",
+        VoxelBiome::Wetlands => "المستنقعات 🌾",
+        VoxelBiome::Badlands => "الأراضي الصخرية 🏜️",
+        VoxelBiome::CraterField => "فوهة النيزك 🌌",
+        VoxelBiome::Volcanic => "الجبال البركانية 🌋",
+        VoxelBiome::CrystalFields => "أبراج البلور 💎",
+    };
+    let local_weather = match weather_state.weather {
+        VoxelWeather::Clear => "صافي ☀️",
+        VoxelWeather::Cloudy => "غائم ☁️",
+        VoxelWeather::Rain => "مطير 🌧️",
+        VoxelWeather::Storm => "عاصفة 🌩️",
+        VoxelWeather::Snow => "ثلجي ❄️",
+        VoxelWeather::DustStorm => "عاصفة رملية 🌪️",
+        VoxelWeather::Ashfall => "أمطار بركانية 🌋",
+        VoxelWeather::IonStorm => "عاصفة أيونية ⚡",
+    };
 
     format!(
-        "WORLD GENERATION\nSeed: 0x{seed:016X}\nPreset: {preset}   Biome: {biome}   Weather: {weather}\nLocal: {local_biome} / {local_weather}\nCrystal ratio: {crystal:.1}   Loaded chunks: {active_chunks}/{load_radius}r\nInput: {input_label} = {input_value}\nLast: {last_change}\n\nP preset  B biome  T weather  [/] crystal\nM input  -/= value  N seed  0 reset",
-        seed = settings.seed,
-        crystal = settings.composition.resource_ratios.crystal,
-        load_radius = world.load_radius,
-        local_biome = weather_state.biome.name(),
-        local_weather = weather_state.weather.name(),
-        input_label = numeric_input.label(),
-        input_value = numeric_input.value_text(settings),
-        last_change = controls.last_change,
+        "🌟 حديقة الفوكسل السحرية\nالبيئة الحالية: {local_biome}\nالطقس: {local_weather}\nالأجزاء المكتملة: {active_chunks}\n\n🎮 تعليمات التحكم:\nWASD / الأسهم: تحريك البطل\nزر الماوس الأيسر / F: حفر وتعدين الكتل ⛏️\nزر الماوس الأيمن / R: بناء كتل جديدة 🧱\nالأرقام 1 - 4: اختيار الكتل (1: تراب | 2: حجر | 3: بلور | 4: ذهب)",
     )
 }

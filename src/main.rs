@@ -2,6 +2,7 @@ mod caves;
 mod config;
 mod controls;
 mod interaction;
+mod menu;
 mod player;
 mod state;
 mod ui;
@@ -11,9 +12,9 @@ mod world;
 use std::env;
 use bevy::prelude::*;
 use crate::caves::*;
-use crate::config::*;
 use crate::controls::*;
 use crate::interaction::*;
+use crate::menu::*;
 use crate::player::*;
 use crate::state::*;
 use crate::ui::*;
@@ -23,18 +24,13 @@ use crate::world::*;
 fn main() {
     let options = ViewerOptions::parse(env::args().skip(1)).unwrap_or_else(|error| {
         eprintln!("voxel_world_viewer: {error}");
-        eprintln!("{}", ViewerOptions::help_text());
         std::process::exit(2);
     });
 
-    if options.help {
-        println!("{}", ViewerOptions::help_text());
-        return;
-    }
-
     let initial_composition = options.composition;
     App::new()
-        .insert_resource(ClearColor(Color::srgb(0.34, 0.43, 0.55)))
+        .init_state::<AppState>()
+        .insert_resource(ClearColor(Color::srgb(0.04, 0.08, 0.14)))
         .insert_resource(VoxelViewerWorld {
             settings: options.generation_settings(),
             load_radius: options.load_radius,
@@ -55,7 +51,7 @@ fn main() {
         .init_resource::<VoxelViewerRenderAssets>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Astra Voxel World // Minecraft Survival & Digging Engine".to_string(),
+                title: "حديقة الفوكسل السحرية // مغامرة الاستكشاف والحفر والتعدين".to_string(),
                 resolution: (1440, 900).into(),
                 ..default()
             }),
@@ -67,8 +63,14 @@ fn main() {
                 setup_viewer_scene,
                 spawn_player_character,
                 setup_flowing_water_material,
+                setup_main_menu_ui,
             ),
         )
+        .add_systems(
+            Update,
+            handle_main_menu_interactions.run_if(in_state(AppState::MainMenu)),
+        )
+        .add_systems(OnExit(AppState::MainMenu), cleanup_main_menu_ui)
         .add_systems(
             Update,
             (
@@ -86,7 +88,8 @@ fn main() {
                 update_generation_dialog_ui,
                 update_generation_hud,
             )
-                .chain(),
+                .chain()
+                .run_if(in_state(AppState::Playing)),
         )
         .run();
 }

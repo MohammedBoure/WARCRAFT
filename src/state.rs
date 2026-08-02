@@ -36,6 +36,13 @@ pub const SEA_LEVEL_STEP: i32 = 2;
 pub const HEIGHT_STEP: i32 = 2;
 pub const DENSITY_STEP: f64 = 0.01;
 
+#[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub enum AppState {
+    #[default]
+    MainMenu,
+    Playing,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewerOptions {
     pub seed: u64,
