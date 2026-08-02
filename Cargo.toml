@@ -6,6 +6,10 @@ rust-version = "1.88"
 
 [dependencies]
 bevy = "0.18.1"
+astra_voxel_world = { path = "D:/git/Astra-Imperium/crates/astra_voxel_world" }
+astra_camera = { path = "D:/git/Astra-Imperium/crates/astra_camera" }
+astra_planet = { path = "D:/git/Astra-Imperium/crates/astra_planet" }
+astra_render = { path = "D:/git/Astra-Imperium/crates/astra_render" }
 
 [profile.dev]
 debug = 0
