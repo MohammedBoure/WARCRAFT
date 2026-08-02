@@ -8,8 +8,18 @@ use crate::state::*;
 
 const PLAYER_HALF_HEIGHT: f32 = 2.1;
 const PLAYER_STEP_HEIGHT: f32 = 2.0;
-const GRAVITY: f32 = 25.0;
-const JUMP_SPEED: f32 = 10.0;
+const WALK_SPEED: f32 = 22.0;
+const SPRINT_MULTIPLIER: f32 = 1.58;
+const GROUND_ACCELERATION: f32 = 92.0;
+const GROUND_BRAKING: f32 = 112.0;
+const AIR_ACCELERATION: f32 = 34.0;
+const RISE_GRAVITY: f32 = 27.0;
+const FALL_GRAVITY: f32 = 39.0;
+const MAX_FALL_SPEED: f32 = 48.0;
+const JUMP_SPEED: f32 = 12.4;
+const COYOTE_SECONDS: f32 = 0.14;
+const JUMP_BUFFER_SECONDS: f32 = 0.15;
+const TURN_RESPONSE: f32 = 15.0;
 
 #[derive(Component)]
 pub struct PlayerTag;
@@ -37,21 +47,27 @@ pub struct WardenLamp;
 #[derive(Resource, Debug)]
 pub struct PlayerState {
     pub speed: f32,
+    pub horizontal_velocity: Vec3,
     pub vertical_speed: f32,
     pub grounded: bool,
     pub current_y: f32,
     pub moving: bool,
+    coyote_timer: f32,
+    jump_buffer_timer: f32,
     safe_timer: f32,
 }
 
 impl Default for PlayerState {
     fn default() -> Self {
         Self {
-            speed: 18.0,
+            speed: WALK_SPEED,
+            horizontal_velocity: Vec3::ZERO,
             vertical_speed: 0.0,
             grounded: false,
             current_y: 80.0,
             moving: false,
+            coyote_timer: 0.0,
+            jump_buffer_timer: 0.0,
             safe_timer: 0.0,
         }
     }
@@ -130,7 +146,8 @@ pub fn setup_warden_animation(
         let mut transitions = AnimationTransitions::new();
         transitions
             .play(&mut player, animations.idle, Duration::ZERO)
-            .repeat();
+            .repeat()
+            .set_speed(0.86);
         commands.entity(entity).insert((
             AnimationGraphHandle(animations.graph.clone()),
             transitions,
@@ -165,9 +182,15 @@ pub fn update_warden_animation(
         if *mode == desired {
             continue;
         }
+        let playback_speed = match desired {
+            WardenAnimationMode::Idle => 0.86,
+            WardenAnimationMode::Walk => 1.18,
+            WardenAnimationMode::Sprint => 1.42,
+        };
         transitions
-            .play(&mut player, node, Duration::from_millis(160))
-            .repeat();
+            .play(&mut player, node, Duration::from_millis(145))
+            .repeat()
+            .set_speed(playback_speed);
         *mode = desired;
     }
 }
@@ -229,74 +252,135 @@ pub fn update_player_movement(
     let Ok(mut transform) = player_query.single_mut() else {
         return;
     };
+    let dt = time.delta_secs().min(0.05);
 
     let forward = Vec3::new(-camera.yaw.sin(), 0.0, -camera.yaw.cos());
     let right = Vec3::new(camera.yaw.cos(), 0.0, -camera.yaw.sin());
-    let mut movement = Vec3::ZERO;
+    let mut input = Vec3::ZERO;
     if keyboard.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
-        movement += forward;
+        input += forward;
     }
     if keyboard.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
-        movement -= forward;
+        input -= forward;
     }
     if keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
-        movement += right;
+        input += right;
     }
     if keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
-        movement -= right;
+        input -= right;
     }
-
-    let speed = player_state.speed
-        * if keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
-            1.55
+    let input_direction = input.normalize_or_zero();
+    let sprinting = input_direction != Vec3::ZERO
+        && keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let target_speed = player_state.speed * if sprinting { SPRINT_MULTIPLIER } else { 1.0 };
+    let desired_velocity = input_direction * target_speed;
+    let acceleration = if player_state.grounded {
+        if input_direction == Vec3::ZERO {
+            GROUND_BRAKING
         } else {
-            1.0
-        };
-    player_state.moving = movement.length_squared() > 0.01;
+            GROUND_ACCELERATION
+        }
+    } else {
+        AIR_ACCELERATION
+    };
+    player_state.horizontal_velocity = move_towards(
+        player_state.horizontal_velocity,
+        desired_velocity,
+        acceleration * dt,
+    );
+    player_state.horizontal_velocity.y = 0.0;
+    player_state.moving = player_state.horizontal_velocity.length_squared() > 0.16;
+
+    if keyboard.just_pressed(KeyCode::Space) {
+        player_state.jump_buffer_timer = JUMP_BUFFER_SECONDS;
+    } else {
+        player_state.jump_buffer_timer = (player_state.jump_buffer_timer - dt).max(0.0);
+    }
+    if player_state.grounded {
+        player_state.coyote_timer = COYOTE_SECONDS;
+    } else {
+        player_state.coyote_timer = (player_state.coyote_timer - dt).max(0.0);
+    }
+    if player_state.jump_buffer_timer > 0.0 && player_state.coyote_timer > 0.0 {
+        player_state.vertical_speed = JUMP_SPEED;
+        player_state.grounded = false;
+        player_state.coyote_timer = 0.0;
+        player_state.jump_buffer_timer = 0.0;
+    }
+    if keyboard.just_released(KeyCode::Space) && player_state.vertical_speed > 0.0 {
+        player_state.vertical_speed *= 0.52;
+    }
 
     let current_foot = transform.translation.y - PLAYER_HALF_HEIGHT;
     let mut next = transform.translation;
-    if player_state.moving {
-        let direction = movement.normalize();
-        let candidate = transform.translation + direction * speed * time.delta_secs();
-        let world_x = (candidate.x / BLOCK_SIZE).floor() as i64;
-        let world_z = (candidate.z / BLOCK_SIZE).floor() as i64;
-        let max_y = ((current_foot + PLAYER_STEP_HEIGHT) / HEIGHT_SCALE).ceil() as i32;
-        let ground = ground_world_y(&loaded, &world, world_x, world_z, max_y);
+    let horizontal_step = player_state.horizontal_velocity * dt;
+    let scan_y = ((current_foot + PLAYER_STEP_HEIGHT) / HEIGHT_SCALE).ceil() as i32;
+
+    if horizontal_step.x.abs() > f32::EPSILON {
+        let candidate_x = next.x + horizontal_step.x;
+        let cell_x = (candidate_x / BLOCK_SIZE).floor() as i64;
+        let cell_z = (next.z / BLOCK_SIZE).floor() as i64;
+        let ground = ground_world_y(&loaded, &world, cell_x, cell_z, scan_y);
         if ground - current_foot <= PLAYER_STEP_HEIGHT {
-            next.x = candidate.x;
-            next.z = candidate.z;
-            if player_state.grounded && ground > current_foot - 0.5 {
+            next.x = candidate_x;
+            if player_state.grounded && ground >= current_foot - 0.48 {
                 next.y = ground + PLAYER_HALF_HEIGHT;
             }
-            transform.rotation = Quat::from_rotation_y((-direction.x).atan2(-direction.z));
+        } else {
+            player_state.horizontal_velocity.x = 0.0;
+        }
+    }
+    if horizontal_step.z.abs() > f32::EPSILON {
+        let candidate_z = next.z + horizontal_step.z;
+        let cell_x = (next.x / BLOCK_SIZE).floor() as i64;
+        let cell_z = (candidate_z / BLOCK_SIZE).floor() as i64;
+        let ground = ground_world_y(&loaded, &world, cell_x, cell_z, scan_y);
+        if ground - current_foot <= PLAYER_STEP_HEIGHT {
+            next.z = candidate_z;
+            if player_state.grounded && ground >= current_foot - 0.48 {
+                next.y = ground + PLAYER_HALF_HEIGHT;
+            }
+        } else {
+            player_state.horizontal_velocity.z = 0.0;
         }
     }
 
     let foot_x = (next.x / BLOCK_SIZE).floor() as i64;
     let foot_z = (next.z / BLOCK_SIZE).floor() as i64;
-    let scan_y = ((next.y - PLAYER_HALF_HEIGHT + PLAYER_STEP_HEIGHT) / HEIGHT_SCALE).ceil() as i32;
-    let ground = ground_world_y(&loaded, &world, foot_x, foot_z, scan_y);
-    let foot = next.y - PLAYER_HALF_HEIGHT;
-
-    if player_state.grounded && keyboard.just_pressed(KeyCode::Space) {
-        player_state.vertical_speed = JUMP_SPEED;
+    let vertical_scan =
+        ((next.y - PLAYER_HALF_HEIGHT + PLAYER_STEP_HEIGHT) / HEIGHT_SCALE).ceil() as i32;
+    let ground = ground_world_y(&loaded, &world, foot_x, foot_z, vertical_scan);
+    let foot_before_fall = next.y - PLAYER_HALF_HEIGHT;
+    if player_state.grounded && foot_before_fall > ground + 0.30 {
         player_state.grounded = false;
     }
+
     if !player_state.grounded {
-        player_state.vertical_speed -= GRAVITY * time.delta_secs();
-        next.y += player_state.vertical_speed * time.delta_secs();
+        let gravity = if player_state.vertical_speed > 0.0 && keyboard.pressed(KeyCode::Space) {
+            RISE_GRAVITY
+        } else {
+            FALL_GRAVITY
+        };
+        player_state.vertical_speed =
+            (player_state.vertical_speed - gravity * dt).max(-MAX_FALL_SPEED);
+        next.y += player_state.vertical_speed * dt;
     }
-    if next.y - PLAYER_HALF_HEIGHT <= ground + 0.12 && player_state.vertical_speed <= 0.0 {
+
+    let foot_after_fall = next.y - PLAYER_HALF_HEIGHT;
+    if foot_after_fall <= ground + 0.14 && player_state.vertical_speed <= 0.0 {
         next.y = ground + PLAYER_HALF_HEIGHT;
         player_state.vertical_speed = 0.0;
         player_state.grounded = true;
-    } else if foot > ground + 0.3 {
-        player_state.grounded = false;
     }
 
-    player_state.safe_timer += time.delta_secs();
-    if player_state.grounded && player_state.safe_timer >= 1.5 {
+    if input_direction != Vec3::ZERO {
+        let target_rotation = Quat::from_rotation_y((-input_direction.x).atan2(-input_direction.z));
+        let turn_blend = 1.0 - (-TURN_RESPONSE * dt).exp();
+        transform.rotation = transform.rotation.slerp(target_rotation, turn_blend);
+    }
+
+    player_state.safe_timer += dt;
+    if player_state.grounded && player_state.safe_timer >= 1.25 {
         session.safe_position = next;
         player_state.safe_timer = 0.0;
     }
@@ -304,8 +388,10 @@ pub fn update_player_movement(
     if next.y < 5.0 || next.y < session.safe_position.y - 55.0 {
         next = session.safe_position;
         next.y += 1.0;
+        player_state.horizontal_velocity *= 0.25;
         player_state.vertical_speed = 0.0;
         player_state.grounded = false;
+        player_state.coyote_timer = 0.0;
         session.add_criticality(balance.fall_risk);
         criticality_events.write(CriticalityChanged(session.criticality));
     }
@@ -314,6 +400,15 @@ pub fn update_player_movement(
     player_state.current_y = next.y;
 }
 
+fn move_towards(current: Vec3, target: Vec3, max_delta: f32) -> Vec3 {
+    let delta = target - current;
+    let distance = delta.length();
+    if distance <= max_delta || distance <= f32::EPSILON {
+        target
+    } else {
+        current + delta / distance * max_delta
+    }
+}
 pub fn animate_player(
     session: Res<GameSession>,
     mut lamps: Query<&mut SpotLight, With<WardenLamp>>,

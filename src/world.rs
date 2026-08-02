@@ -121,8 +121,9 @@ pub fn control_viewer_camera(
     mut mouse_wheel: MessageReader<MouseWheel>,
     time: Res<Time>,
     preferences: Res<GamePreferences>,
+    player_state: Res<PlayerState>,
     mut camera_state: ResMut<VoxelViewerCamera>,
-    mut camera_query: Query<&mut Transform, With<VoxelViewerCameraTag>>,
+    mut camera_query: Query<(&mut Transform, &mut Projection), With<VoxelViewerCameraTag>>,
     player_query: Query<&Transform, (With<PlayerTag>, Without<VoxelViewerCameraTag>)>,
 ) {
     let interactive = matches!(app_state.get(), AppState::Playing);
@@ -160,11 +161,12 @@ pub fn control_viewer_camera(
     }
 
     let target = if let Ok(player) = player_query.single() {
+        let look_ahead = player_state.horizontal_velocity * 0.16;
         camera_state.center = Vec2::new(
-            player.translation.x / BLOCK_SIZE,
-            player.translation.z / BLOCK_SIZE,
+            (player.translation.x + look_ahead.x) / BLOCK_SIZE,
+            (player.translation.z + look_ahead.z) / BLOCK_SIZE,
         );
-        player.translation + Vec3::Y * 2.0
+        player.translation + look_ahead * 0.20 + Vec3::Y * 2.0
     } else {
         Vec3::new(
             camera_state.center.x * BLOCK_SIZE,
@@ -173,14 +175,22 @@ pub fn control_viewer_camera(
         )
     };
 
-    let Ok(mut transform) = camera_query.single_mut() else {
+    let Ok((mut transform, mut projection)) = camera_query.single_mut() else {
         return;
     };
     let mut desired = Transform::default();
     apply_viewer_camera_transform(&camera_state, &mut desired, target.y);
-    let smoothing = 1.0 - (-7.0 * time.delta_secs()).exp();
+    let smoothing = 1.0 - (-8.5 * time.delta_secs()).exp();
     transform.translation = transform.translation.lerp(desired.translation, smoothing);
     transform.rotation = transform.rotation.slerp(desired.rotation, smoothing);
+
+    if let Projection::Perspective(perspective) = &mut *projection {
+        let sprinting =
+            player_state.moving && keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        let target_fov = if sprinting { 50.0 } else { 46.0_f32 }.to_radians();
+        let fov_blend = 1.0 - (-5.5 * time.delta_secs()).exp();
+        perspective.fov += (target_fov - perspective.fov) * fov_blend;
+    }
 
     if camera_state.shake > 0.001 && !preferences.reduced_motion {
         let t = time.elapsed_secs() * 37.0;

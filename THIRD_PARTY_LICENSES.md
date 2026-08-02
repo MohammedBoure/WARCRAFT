@@ -9,16 +9,19 @@ This file identifies redistributable third-party material included with **Critic
 - License: SIL Open Font License, Version 1.1
 - Full license: assets/fonts/OFL.txt
 
-## Kenney audio
+## Audio
 
-Audio was selected and renamed from:
+Adaptive ambient layers and selected UI/result sounds:
 
-- Sci-fi Sounds: https://kenney.nl/assets/sci-fi-sounds
-- Impact Sounds: https://kenney.nl/assets/impact-sounds
-- UI Audio: https://kenney.nl/assets/ui-audio
+- Dark Sci-Fi Audio Pack by SRG774: https://opengameart.org/content/dark-sci-fi-audio-pack
+
+Mining, building, crystal, warning, collapse and failure effects:
+
+- Kenney Sci-fi Sounds: https://kenney.nl/assets/sci-fi-sounds
+- Kenney Impact Sounds: https://kenney.nl/assets/impact-sounds
 
 License: Creative Commons CC0 1.0 Universal.
-The original filenames are listed in assets/audio/CREDITS.md.
+The original filenames and mappings are listed in assets/audio/CREDITS.md.
 
 ## astra_voxel_world
 

@@ -96,7 +96,7 @@ cargo run --release
 ## التراخيص والاعتمادات
 
 - Noto Kufi Arabic من Google Fonts: مرخص وفق SIL Open Font License 1.1، والنص الكامل في **assets/fonts/OFL.txt**.
-- مؤثرات Kenney: مرخصة CC0 1.0، والتفاصيل والأسماء الأصلية في **assets/audio/CREDITS.md**.
+- الصوت: طبقات Dark Sci-Fi Audio Pack ومؤثرات Kenney مرخصة CC0 1.0، والتفاصيل في **assets/audio/CREDITS.md**.
 - شخصية Kenney Blocky Characters: نموذج GLB متحرك مرخص CC0 1.0، والترخيص في **assets/models/kenney-blocky/LICENSE.txt**.
 - **astra_voxel_world**: مرخص MIT، والنص الكامل في **crates/astra_voxel_world/LICENSE**.
 - بقية الشيفرة الخاصة باللعبة خاضعة لشروط صاحب المشروع.

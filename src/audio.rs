@@ -6,6 +6,8 @@ use crate::state::*;
 #[derive(Resource)]
 pub struct GameAudio {
     ambient: Handle<AudioSource>,
+    risk_pulse: Handle<AudioSource>,
+    risk_urgent: Handle<AudioSource>,
     mine: Handle<AudioSource>,
     build: Handle<AudioSource>,
     crystal: Handle<AudioSource>,
@@ -25,8 +27,12 @@ impl Default for AudioRiskState {
     }
 }
 
-#[derive(Component)]
-pub struct AmbientLoop;
+#[derive(Component, Clone, Copy)]
+pub enum AdaptiveAudioLayer {
+    Calm,
+    Pulse,
+    Urgent,
+}
 
 pub fn setup_audio(
     mut commands: Commands,
@@ -35,6 +41,8 @@ pub fn setup_audio(
 ) {
     let audio = GameAudio {
         ambient: asset_server.load("audio/ambient.ogg"),
+        risk_pulse: asset_server.load("audio/risk_pulse.ogg"),
+        risk_urgent: asset_server.load("audio/risk_urgent.ogg"),
         mine: asset_server.load("audio/mine.ogg"),
         build: asset_server.load("audio/build.ogg"),
         crystal: asset_server.load("audio/crystal.ogg"),
@@ -44,11 +52,21 @@ pub fn setup_audio(
         failure: asset_server.load("audio/failure.ogg"),
         click: asset_server.load("audio/click.ogg"),
     };
-    commands.spawn((
-        AudioPlayer::new(audio.ambient.clone()),
-        PlaybackSettings::LOOP.with_volume(Volume::Linear(preferences.master_volume * 0.22)),
-        AmbientLoop,
-    ));
+    for (source, layer, volume) in [
+        (
+            audio.ambient.clone(),
+            AdaptiveAudioLayer::Calm,
+            preferences.master_volume * 0.14,
+        ),
+        (audio.risk_pulse.clone(), AdaptiveAudioLayer::Pulse, 0.0),
+        (audio.risk_urgent.clone(), AdaptiveAudioLayer::Urgent, 0.0),
+    ] {
+        commands.spawn((
+            AudioPlayer::new(source),
+            PlaybackSettings::LOOP.with_volume(Volume::Linear(volume)),
+            layer,
+        ));
+    }
     commands.insert_resource(audio);
 }
 
@@ -205,17 +223,37 @@ pub fn play_finish_audio(
 
 pub fn update_ambient_audio(
     preferences: Res<GamePreferences>,
+    state: Res<State<AppState>>,
     session: Res<GameSession>,
-    mut ambient_query: Query<&mut PlaybackSettings, With<AmbientLoop>>,
+    mut layers: Query<(&AdaptiveAudioLayer, &mut PlaybackSettings)>,
 ) {
-    let Ok(mut settings) = ambient_query.single_mut() else {
-        return;
+    let risk = (session.criticality / 100.0).clamp(0.0, 1.0);
+    let active_mix = if matches!(state.get(), AppState::Playing) {
+        1.0
+    } else if matches!(state.get(), AppState::Decision | AppState::Ending) {
+        0.72
+    } else {
+        0.52
     };
-    let intensity = (session.criticality / 100.0).clamp(0.0, 1.0);
-    settings.volume = Volume::Linear(preferences.master_volume * (0.12 + intensity * 0.14));
-    settings.speed = 0.92 + intensity * 0.16;
+    let calm = 1.0 - smoothstep(0.32, 0.72, risk);
+    let pulse = smoothstep(0.30, 0.66, risk) * (1.0 - smoothstep(0.82, 0.98, risk));
+    let urgent = smoothstep(0.70, 0.96, risk);
+
+    for (layer, mut settings) in &mut layers {
+        let layer_volume = match layer {
+            AdaptiveAudioLayer::Calm => calm * 0.16,
+            AdaptiveAudioLayer::Pulse => pulse * 0.17,
+            AdaptiveAudioLayer::Urgent => urgent * 0.20,
+        };
+        settings.volume = Volume::Linear(preferences.master_volume * active_mix * layer_volume);
+        settings.speed = 1.0;
+    }
 }
 
+fn smoothstep(start: f32, end: f32, value: f32) -> f32 {
+    let t = ((value - start) / (end - start)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
 fn play_one_shot(commands: &mut Commands, source: Handle<AudioSource>, volume: f32) {
     play_one_shot_varied(commands, source, volume, 1.0);
 }
