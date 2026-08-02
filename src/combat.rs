@@ -1157,8 +1157,11 @@ pub fn process_damage(
     mut runtime: ResMut<CombatRuntime>,
     mut session: ResMut<GameSession>,
     mut player: Query<&mut Transform, With<PlayerTag>>,
-    mut enemies: Query<(&mut Enemy, &mut CombatTarget, &Transform)>,
-    mut objectives: Query<(&mut MissionTarget, &Transform), Without<Enemy>>,
+    mut enemies: Query<(&mut Enemy, &mut CombatTarget, &Transform), Without<PlayerTag>>,
+    mut objectives: Query<
+        (&mut MissionTarget, &Transform),
+        (Without<Enemy>, Without<PlayerTag>),
+    >,
     mut events: MessageReader<DamageEvent>,
     mut writers: DamageWriters,
     mut next_state: ResMut<NextState<AppState>>,
