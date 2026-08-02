@@ -14,7 +14,7 @@ use bevy::{
 };
 
 use crate::interaction::VoxelWorldEdits;
-use crate::player::PlayerTag;
+use crate::player::{PlayerState, PlayerTag};
 use crate::state::*;
 
 pub fn setup_viewer_scene(
