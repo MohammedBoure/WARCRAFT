@@ -52,6 +52,7 @@ fn main() {
             initial_composition,
         ))
         .init_resource::<PlayerState>()
+        .init_resource::<MiddleClickResetTimer>()
         .init_resource::<VoxelWorldEdits>()
         .init_resource::<VoxelGenerationDialogState>()
         .init_resource::<VoxelViewerWeatherState>()

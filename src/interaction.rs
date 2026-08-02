@@ -1,5 +1,6 @@
 use astra_voxel_world::prelude::*;
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 use crate::player::*;
 use crate::state::*;
 use crate::world::*;
@@ -37,8 +38,8 @@ pub fn setup_target_highlight(
 ) {
     let wire_mesh = meshes.add(Cuboid::new(BLOCK_SIZE * 1.05, HEIGHT_SCALE * 1.05, BLOCK_SIZE * 1.05));
     let wire_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 0.85, 0.2, 0.35),
-        emissive: LinearRgba::rgb(1.2, 1.0, 0.3),
+        base_color: Color::srgba(1.0, 0.85, 0.2, 0.40),
+        emissive: LinearRgba::rgb(1.5, 1.2, 0.3),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         ..default()
@@ -55,37 +56,70 @@ pub fn setup_target_highlight(
 }
 
 pub fn update_target_block_highlight(
-    mut edits_res: ResMut<VoxelWorldEdits>,
+    world_res: Res<VoxelViewerWorld>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<VoxelViewerCameraTag>>,
     player_query: Query<&Transform, (With<PlayerTag>, Without<TargetBlockHighlightTag>)>,
+    mut edits_res: ResMut<VoxelWorldEdits>,
     mut highlight_query: Query<(&mut Transform, &mut Visibility), (With<TargetBlockHighlightTag>, Without<PlayerTag>)>,
 ) {
-    let Ok(player_transform) = player_query.single() else {
+    let Ok((camera, camera_transform)) = camera_query.single() else {
         return;
     };
-
+    let Ok(window) = primary_window.single() else {
+        return;
+    };
     let Ok((mut highlight_transform, mut visibility)) = highlight_query.single_mut() else {
         return;
     };
 
-    // إيجاد موضع الفوكسل المستهدف أمام البطل مباشرة
-    let forward = player_transform.forward();
-    let target_vec = player_transform.translation + forward * 2.8 + Vec3::NEG_Y * 0.4;
+    let mut found_voxel = None;
 
-    let target_pos = VoxelBlockPosition::new(
-        (target_vec.x / BLOCK_SIZE).round() as i64,
-        (target_vec.y / HEIGHT_SCALE).round() as i32,
-        (target_vec.z / BLOCK_SIZE).round() as i64,
-    );
+    // 1. التتبع الشعاعي الدقيق 3D Raycasting عبر موقع مؤشر الماوس
+    if let Some(cursor_pos) = window.cursor_position() {
+        if let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos) {
+            // اختبار تتبع الكتل الفوكسلية على طول امتداد الشعاع
+            for step in 1..100 {
+                let point = ray.origin + ray.direction * (step as f32 * 0.45);
+                let vx = (point.x / BLOCK_SIZE).round() as i64;
+                let vy = (point.y / HEIGHT_SCALE).round() as i32;
+                let vz = (point.z / BLOCK_SIZE).round() as i64;
 
-    edits_res.targeted_position = Some(target_pos);
+                let column = sample_voxel_column(world_res.settings, vx, vz);
+                if vy <= column.height && vy > 0 {
+                    found_voxel = Some(VoxelBlockPosition::new(vx, vy, vz));
+                    break;
+                }
+            }
+        }
+    }
 
-    // نقل المربع المظلل لموقع الكتلة المستهدفة
-    highlight_transform.translation = Vec3::new(
-        target_pos.x as f32 * BLOCK_SIZE,
-        target_pos.y as f32 * HEIGHT_SCALE,
-        target_pos.z as f32 * BLOCK_SIZE,
-    );
-    *visibility = Visibility::Visible;
+    // 2. إذا لم يكن الماوس فوق كتلة محددة، نستخدم الاتجاه أمام البطل
+    if found_voxel.is_none() {
+        if let Ok(player_transform) = player_query.single() {
+            let p_forward = player_transform.forward();
+            let target_vec = player_transform.translation + p_forward * 2.8 + Vec3::NEG_Y * 0.4;
+
+            found_voxel = Some(VoxelBlockPosition::new(
+                (target_vec.x / BLOCK_SIZE).round() as i64,
+                (target_vec.y / HEIGHT_SCALE).round() as i32,
+                (target_vec.z / BLOCK_SIZE).round() as i64,
+            ));
+        }
+    }
+
+    edits_res.targeted_position = found_voxel;
+
+    if let Some(target_pos) = found_voxel {
+        highlight_transform.translation = Vec3::new(
+            target_pos.x as f32 * BLOCK_SIZE,
+            target_pos.y as f32 * HEIGHT_SCALE,
+            target_pos.z as f32 * BLOCK_SIZE,
+        );
+        *visibility = Visibility::Visible;
+    } else {
+        *visibility = Visibility::Hidden;
+    }
 }
 
 pub fn handle_voxel_digging_and_building(

@@ -111,6 +111,7 @@ pub fn control_viewer_camera(
     mut mouse_wheel: MessageReader<MouseWheel>,
     time: Res<Time>,
     player_state: Res<PlayerState>,
+    mut reset_timer: ResMut<MiddleClickResetTimer>,
     mut camera_state: ResMut<VoxelViewerCamera>,
     mut camera_query: Query<&mut Transform, With<VoxelViewerCameraTag>>,
     player_query: Query<&Transform, (With<PlayerTag>, Without<VoxelViewerCameraTag>)>,
@@ -119,6 +120,16 @@ pub fn control_viewer_camera(
         mouse_wheel.clear();
         mouse_motion.clear();
         return;
+    }
+
+    // كشف النقر المزدوج بالزر الأوسط لإعادة ضبط زاوية وارتفاع الرؤية للافتراضي
+    if mouse.just_pressed(MouseButton::Middle) {
+        let current_time = time.elapsed_secs();
+        if current_time - reset_timer.last_click_time < 0.35 {
+            camera_state.yaw = -0.72;
+            camera_state.height = CAMERA_DEFAULT_HEIGHT;
+        }
+        reset_timer.last_click_time = current_time;
     }
 
     // تدوير الكاميرا عند الضغط والسحب بالزر الأوسط للماوس

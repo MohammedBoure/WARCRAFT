@@ -36,6 +36,11 @@ pub const SEA_LEVEL_STEP: i32 = 2;
 pub const HEIGHT_STEP: i32 = 2;
 pub const DENSITY_STEP: f64 = 0.01;
 
+#[derive(Resource, Default)]
+pub struct MiddleClickResetTimer {
+    pub last_click_time: f32,
+}
+
 #[derive(Resource)]
 pub struct ArabicFont(pub Handle<Font>);
 

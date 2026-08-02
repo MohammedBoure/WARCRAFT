@@ -131,26 +131,37 @@ pub fn update_player_movement(
             player_state.speed
         };
 
+        let mut next_pos = player_transform.translation;
         if movement.length_squared() > 0.0 {
             let move_dir = movement.normalize();
-            player_transform.translation += move_dir * speed * time.delta_secs();
+            next_pos += move_dir * speed * time.delta_secs();
             player_transform.rotation = Quat::from_rotation_y((-move_dir.x).atan2(-move_dir.z));
         }
 
-        // مطابقة الارتفاع مع تضاريس الفوكسل أو الكهوف
-        let world_x = player_transform.translation.x / BLOCK_SIZE;
-        let world_z = player_transform.translation.z / BLOCK_SIZE;
-        
-        let surface_y = voxel_surface_y_at(
-            world_res.settings,
-            world_x,
-            world_z,
-            VoxelSurfaceMeshStyle::viewer(),
-        );
+        // نظام الفيزياء والتصادم السطحي والجداري
+        let world_x = (next_pos.x / BLOCK_SIZE).round() as i64;
+        let world_z = (next_pos.z / BLOCK_SIZE).round() as i64;
+        let column = sample_voxel_column(world_res.settings, world_x, world_z);
+        let ground_y = column.height as f32 * HEIGHT_SCALE;
 
-        player_state.surface_y = surface_y;
+        let current_y = player_transform.translation.y;
+        let y_diff = ground_y - current_y;
+
+        // إذا كانت المنطقة الأمامية جداراً مرتفعاً جداً (أكثر من 1.8 وحدة)، نمنع الاختراق
+        if y_diff > 1.8 {
+            // تصادم جداري: نمنع الحركة الأفقية باتجاه الجدار
+            next_pos.x = player_transform.translation.x;
+            next_pos.z = player_transform.translation.z;
+        } else {
+            // مطابقة ارتفاع القدمين مع السطح بسلاسة
+            next_pos.y = ground_y + 0.45;
+        }
+
+        player_transform.translation = next_pos;
+
+        player_state.surface_y = ground_y;
         player_state.current_y = player_transform.translation.y;
-        player_state.is_underground = player_transform.translation.y < (surface_y - 2.5);
+        player_state.is_underground = player_transform.translation.y < (ground_y - 2.5);
 
         player_pos = player_transform.translation;
         player_forward = *player_transform.forward();

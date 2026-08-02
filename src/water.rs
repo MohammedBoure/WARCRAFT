@@ -13,7 +13,7 @@ pub fn setup_flowing_water_material(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let water_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.12, 0.55, 0.88, 0.72), // ماء شفاف مبهج
+        base_color: Color::srgba(0.12, 0.55, 0.88, 0.72),
         emissive: LinearRgba::rgb(0.05, 0.35, 0.6),
         perceptual_roughness: 0.1,
         metallic: 0.2,
