@@ -179,40 +179,40 @@ pub fn setup_combat_assets(
 ) {
     let colors = [
         (
-            Color::srgb(0.36, 0.58, 0.12),
-            LinearRgba::rgb(0.12, 0.48, 0.02),
+            Color::srgb(0.45, 0.95, 0.15),
+            LinearRgba::rgb(18.0, 85.0, 12.0),
         ),
         (
-            Color::srgb(0.54, 0.12, 0.50),
-            LinearRgba::rgb(0.9, 0.04, 0.72),
+            Color::srgb(0.85, 0.20, 0.95),
+            LinearRgba::rgb(85.0, 15.0, 110.0),
         ),
         (
-            Color::srgb(0.12, 0.34, 0.62),
-            LinearRgba::rgb(0.04, 0.72, 1.8),
+            Color::srgb(0.20, 0.75, 1.0),
+            LinearRgba::rgb(25.0, 95.0, 220.0),
         ),
         (
-            Color::srgb(0.42, 0.11, 0.08),
-            LinearRgba::rgb(1.2, 0.08, 0.02),
+            Color::srgb(1.0, 0.30, 0.12),
+            LinearRgba::rgb(180.0, 45.0, 15.0),
         ),
         (
-            Color::srgb(0.28, 0.04, 0.46),
-            LinearRgba::rgb(2.8, 0.08, 4.2),
+            Color::srgb(0.65, 0.15, 1.0),
+            LinearRgba::rgb(120.0, 22.0, 190.0),
         ),
         (
-            Color::srgb(0.08, 0.86, 1.0),
-            LinearRgba::rgb(0.05, 2.8, 4.0),
+            Color::srgb(0.15, 0.95, 1.0),
+            LinearRgba::rgb(35.0, 160.0, 260.0),
         ),
         (
-            Color::srgb(0.92, 0.18, 0.76),
-            LinearRgba::rgb(4.0, 0.08, 2.4),
+            Color::srgb(1.0, 0.25, 0.85),
+            LinearRgba::rgb(160.0, 28.0, 130.0),
         ),
         (
-            Color::srgb(0.28, 0.48, 1.0),
-            LinearRgba::rgb(0.18, 1.2, 4.5),
+            Color::srgb(0.35, 0.65, 1.0),
+            LinearRgba::rgb(45.0, 110.0, 250.0),
         ),
         (
-            Color::srgb(1.0, 0.14, 0.08),
-            LinearRgba::rgb(4.0, 0.05, 0.02),
+            Color::srgb(1.0, 0.22, 0.10),
+            LinearRgba::rgb(220.0, 38.0, 18.0),
         ),
     ];
     let created_materials: Vec<_> = colors
@@ -221,8 +221,7 @@ pub fn setup_combat_assets(
             materials.add(StandardMaterial {
                 base_color,
                 emissive,
-                metallic: 0.32,
-                perceptual_roughness: 0.28,
+                unlit: true,
                 ..default()
             })
         })
@@ -230,19 +229,19 @@ pub fn setup_combat_assets(
     let fx_materials = [
         (
             Color::srgba(0.20, 0.95, 1.0, 0.88),
-            LinearRgba::rgb(25.0, 110.0, 150.0),
+            LinearRgba::rgb(55.0, 220.0, 320.0),
         ),
         (
             Color::srgba(1.0, 0.35, 0.10, 0.92),
-            LinearRgba::rgb(220.0, 55.0, 15.0),
+            LinearRgba::rgb(380.0, 110.0, 30.0),
         ),
         (
             Color::srgba(0.30, 0.65, 1.0, 0.90),
-            LinearRgba::rgb(35.0, 95.0, 180.0),
+            LinearRgba::rgb(75.0, 180.0, 360.0),
         ),
         (
             Color::srgba(1.0, 0.18, 0.10, 0.88),
-            LinearRgba::rgb(140.0, 22.0, 12.0),
+            LinearRgba::rgb(280.0, 48.0, 25.0),
         ),
     ]
     .map(|(base_color, emissive)| {
@@ -258,19 +257,19 @@ pub fn setup_combat_assets(
     let fx_core_materials = [
         (
             Color::srgba(0.85, 1.0, 1.0, 0.96),
-            LinearRgba::rgb(120.0, 320.0, 420.0),
+            LinearRgba::rgb(250.0, 550.0, 750.0),
         ),
         (
             Color::srgba(1.0, 0.90, 0.65, 0.98),
-            LinearRgba::rgb(450.0, 240.0, 60.0),
+            LinearRgba::rgb(750.0, 480.0, 140.0),
         ),
         (
             Color::srgba(0.85, 0.95, 1.0, 0.96),
-            LinearRgba::rgb(110.0, 260.0, 480.0),
+            LinearRgba::rgb(240.0, 480.0, 850.0),
         ),
         (
             Color::srgba(1.0, 0.80, 0.50, 0.96),
-            LinearRgba::rgb(380.0, 90.0, 40.0),
+            LinearRgba::rgb(650.0, 180.0, 85.0),
         ),
     ]
     .map(|(base_color, emissive)| {
@@ -1761,12 +1760,12 @@ fn spawn_shot(
 
 fn projectile_visual_profile(kind: DamageKind) -> (f32, f32, f32, f32, f32) {
     match kind {
-        DamageKind::Pulse => (0.65, 1.20, 3.0, 14_000.0, 11.0),
-        DamageKind::Plasma => (1.50, 1.95, 5.8, 28_000.0, 17.0),
-        DamageKind::Ion => (0.95, 1.48, 6.8, 18_000.0, 14.0),
-        DamageKind::Tesla => (0.85, 1.35, 5.0, 16_000.0, 12.0),
-        DamageKind::Nuke => (2.20, 2.80, 9.5, 40_000.0, 24.0),
-        DamageKind::Enemy => (0.78, 1.20, 3.8, 10_000.0, 9.0),
+        DamageKind::Pulse => (0.75, 1.35, 3.5, 24_000.0, 14.0),
+        DamageKind::Plasma => (1.65, 2.25, 6.5, 48_000.0, 22.0),
+        DamageKind::Ion => (1.10, 1.65, 7.5, 32_000.0, 18.0),
+        DamageKind::Tesla => (0.95, 1.50, 5.5, 28_000.0, 16.0),
+        DamageKind::Nuke => (2.50, 3.20, 11.0, 85_000.0, 32.0),
+        DamageKind::Enemy => (0.85, 1.35, 4.2, 18_000.0, 12.0),
     }
 }
 
@@ -2240,10 +2239,10 @@ fn spawn_impact_fx(
     power: f32,
 ) {
     let style = style % assets.fx_materials.len();
-    let light_intensity = 32_000.0 * power;
-    let light_range = 15.0 * power;
-    let core_scale = Vec3::splat(0.25 * power);
-    let end_core = Vec3::splat(2.2 * power);
+    let light_intensity = 75_000.0 * power;
+    let light_range = 24.0 * power;
+    let core_scale = Vec3::splat(0.28 * power);
+    let end_core = Vec3::splat(2.5 * power);
 
     commands.spawn((
         Name::new("Energy impact core"),

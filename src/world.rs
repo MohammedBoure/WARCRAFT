@@ -53,7 +53,7 @@ pub fn setup_viewer_scene(
             },
         ),
         Bloom {
-            intensity: 0.15,
+            intensity: 0.36,
             ..default()
         },
         DistanceFog {
