@@ -79,6 +79,7 @@ pub struct CraftState {
 #[derive(Resource)]
 pub struct CombatAssets {
     shield: Handle<Mesh>,
+    shield_material: Handle<StandardMaterial>,
     shot: Handle<Mesh>,
     flash: Handle<Mesh>,
     beam: Handle<Mesh>,
@@ -228,20 +229,20 @@ pub fn setup_combat_assets(
         .collect();
     let fx_materials = [
         (
-            Color::srgba(0.20, 0.95, 1.0, 0.88),
-            LinearRgba::rgb(55.0, 220.0, 320.0),
+            Color::srgba(0.20, 0.95, 1.0, 0.40),
+            LinearRgba::rgb(25.0, 110.0, 160.0),
         ),
         (
-            Color::srgba(1.0, 0.35, 0.10, 0.92),
-            LinearRgba::rgb(380.0, 110.0, 30.0),
+            Color::srgba(1.0, 0.25, 0.85, 0.40),
+            LinearRgba::rgb(160.0, 35.0, 110.0),
         ),
         (
-            Color::srgba(0.30, 0.65, 1.0, 0.90),
-            LinearRgba::rgb(75.0, 180.0, 360.0),
+            Color::srgba(0.30, 0.65, 1.0, 0.40),
+            LinearRgba::rgb(35.0, 95.0, 180.0),
         ),
         (
-            Color::srgba(1.0, 0.18, 0.10, 0.88),
-            LinearRgba::rgb(280.0, 48.0, 25.0),
+            Color::srgba(1.0, 0.22, 0.10, 0.40),
+            LinearRgba::rgb(140.0, 24.0, 12.0),
         ),
     ]
     .map(|(base_color, emissive)| {
@@ -249,27 +250,28 @@ pub fn setup_combat_assets(
             base_color,
             emissive,
             unlit: true,
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: AlphaMode::Add,
+            cull_mode: None,
             ..default()
         })
     })
     .to_vec();
     let fx_core_materials = [
         (
-            Color::srgba(0.85, 1.0, 1.0, 0.96),
-            LinearRgba::rgb(250.0, 550.0, 750.0),
+            Color::srgba(0.90, 1.0, 1.0, 0.90),
+            LinearRgba::rgb(120.0, 320.0, 450.0),
         ),
         (
-            Color::srgba(1.0, 0.90, 0.65, 0.98),
-            LinearRgba::rgb(750.0, 480.0, 140.0),
+            Color::srgba(1.0, 0.90, 0.95, 0.90),
+            LinearRgba::rgb(450.0, 180.0, 320.0),
         ),
         (
-            Color::srgba(0.85, 0.95, 1.0, 0.96),
-            LinearRgba::rgb(240.0, 480.0, 850.0),
+            Color::srgba(0.88, 0.96, 1.0, 0.90),
+            LinearRgba::rgb(110.0, 260.0, 480.0),
         ),
         (
-            Color::srgba(1.0, 0.80, 0.50, 0.96),
-            LinearRgba::rgb(650.0, 180.0, 85.0),
+            Color::srgba(1.0, 0.85, 0.70, 0.90),
+            LinearRgba::rgb(380.0, 95.0, 45.0),
         ),
     ]
     .map(|(base_color, emissive)| {
@@ -277,14 +279,26 @@ pub fn setup_combat_assets(
             base_color,
             emissive,
             unlit: true,
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: AlphaMode::Add,
+            cull_mode: None,
             ..default()
         })
     })
     .to_vec();
 
+    let shield_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.15, 0.65, 1.0, 0.08),
+        emissive: LinearRgba::rgb(0.2, 1.5, 3.5),
+        metallic: 0.1,
+        perceptual_roughness: 0.05,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        ..default()
+    });
+
     commands.insert_resource(CombatAssets {
         shield: meshes.add(Sphere::new(3.6).mesh().ico(3).expect("sphere")),
+        shield_material,
         shot: meshes.add(Sphere::new(0.45).mesh().ico(1).expect("shot")),
         flash: meshes.add(Sphere::new(0.55).mesh().ico(2).expect("flash")),
         beam: meshes.add(Cuboid::new(0.14, 0.14, 1.0)),
@@ -874,7 +888,7 @@ fn spawn_enemy(
                 parent.spawn((
                     Name::new("Carrier ion shield"),
                     Mesh3d(assets.shield.clone()),
-                    MeshMaterial3d(assets.fx_materials[2].clone()),
+                    MeshMaterial3d(assets.shield_material.clone()),
                     Transform::from_xyz(0.0, 0.5, 0.0).with_scale(shield_scale),
                     BossShieldVisual {
                         base_scale: shield_scale,
@@ -1668,7 +1682,7 @@ fn spawn_shot(
     shot.velocity = velocity;
     let style = fx_style(shot.kind);
     let direction = velocity.normalize_or_zero();
-    let (core_size, halo_size, tail_length, light_intensity, light_range) =
+    let (core_size, _halo_size, tail_length, light_intensity, light_range) =
         projectile_visual_profile(shot.kind);
     spawn_muzzle_fx(
         commands,
@@ -1684,17 +1698,17 @@ fn spawn_shot(
             Name::new("Energy projectile core"),
             Mesh3d(assets.shot.clone()),
             MeshMaterial3d(assets.fx_core_materials[style].clone()),
-            Transform::from_translation(origin).with_scale(Vec3::splat(core_size * 0.75)),
+            Transform::from_translation(origin).with_scale(Vec3::splat(core_size * 0.45)),
             PointLight {
                 color: fx_color(style),
                 intensity: light_intensity,
                 range: light_range,
-                radius: 0.35 * core_size,
+                radius: 0.18 * core_size,
                 shadows_enabled: false,
                 ..default()
             },
             ProjectileVisual {
-                base_scale: Vec3::splat(core_size * 0.75),
+                base_scale: Vec3::splat(core_size * 0.45),
                 light_intensity,
                 light_range,
                 phase,
@@ -1707,63 +1721,33 @@ fn spawn_shot(
             RunEntity,
         ))
         .with_children(|projectile| {
-            // Layer 1: Vibrant saturated inner plasma sheath
+            // Layer 1: Saturated inner plasma glow
             projectile.spawn((
-                Name::new("Projectile inner plasma sheath"),
+                Name::new("Projectile inner plasma"),
                 Mesh3d(assets.shot.clone()),
                 MeshMaterial3d(assets.materials[material].clone()),
-                Transform::from_scale(Vec3::splat(1.45)),
+                Transform::from_scale(Vec3::splat(1.35)),
             ));
-            // Layer 2: Wide soft glowing radiant aura (Volumetric Bloom flare)
-            projectile.spawn((
-                Name::new("Projectile soft energy aura"),
-                Mesh3d(assets.flash.clone()),
-                MeshMaterial3d(assets.fx_materials[style].clone()),
-                Transform::from_scale(Vec3::splat(halo_size * 2.4)),
-                ProjectileHalo {
-                    base_scale: Vec3::splat(halo_size * 2.4),
-                    spin: 2.8,
-                    pulse: 0.14,
-                    phase,
-                },
-            ));
-            // Layer 3: Secondary outer atmospheric glow ring
-            projectile.spawn((
-                Name::new("Projectile corona ring"),
-                Mesh3d(assets.ring.clone()),
-                MeshMaterial3d(assets.fx_materials[style].clone()),
-                Transform {
-                    translation: Vec3::ZERO,
-                    rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                    scale: Vec3::splat(halo_size * 1.8),
-                },
-                ProjectileHalo {
-                    base_scale: Vec3::splat(halo_size * 1.8),
-                    spin: -6.0,
-                    pulse: 0.10,
-                    phase: phase + 1.5,
-                },
-            ));
-            // Layer 4: Sleek tapered plasma tail
+            // Layer 2: Sleek tapered plasma tail
             projectile.spawn((
                 Name::new("Projectile plasma tail"),
                 Mesh3d(assets.beam.clone()),
                 MeshMaterial3d(assets.fx_materials[style].clone()),
                 Transform::from_translation(Vec3::Z * -tail_length * 0.48).with_scale(Vec3::new(
-                    core_size * 0.65,
-                    core_size * 0.65,
+                    core_size * 0.35,
+                    core_size * 0.35,
                     tail_length,
                 )),
             ));
-            // Layer 5: Hot white-hot needle center tail
+            // Layer 3: Hot needle center tail
             projectile.spawn((
                 Name::new("Projectile hot core tail"),
                 Mesh3d(assets.beam.clone()),
                 MeshMaterial3d(assets.fx_core_materials[style].clone()),
                 Transform::from_translation(Vec3::Z * -tail_length * 0.44).with_scale(Vec3::new(
-                    core_size * 0.22,
-                    core_size * 0.22,
-                    tail_length * 0.90,
+                    core_size * 0.12,
+                    core_size * 0.12,
+                    tail_length * 0.88,
                 )),
             ));
         });
@@ -1771,12 +1755,12 @@ fn spawn_shot(
 
 fn projectile_visual_profile(kind: DamageKind) -> (f32, f32, f32, f32, f32) {
     match kind {
-        DamageKind::Pulse => (0.65, 1.80, 3.8, 32_000.0, 16.0),
-        DamageKind::Plasma => (1.75, 4.20, 7.2, 95_000.0, 30.0),
-        DamageKind::Ion => (1.15, 2.80, 8.2, 52_000.0, 22.0),
-        DamageKind::Tesla => (0.95, 2.40, 6.0, 42_000.0, 19.0),
-        DamageKind::Nuke => (2.80, 6.50, 12.5, 160_000.0, 45.0),
-        DamageKind::Enemy => (0.85, 2.10, 4.4, 28_000.0, 15.0),
+        DamageKind::Pulse => (0.60, 1.40, 3.4, 28_000.0, 14.0),
+        DamageKind::Plasma => (1.45, 2.80, 6.2, 75_000.0, 26.0),
+        DamageKind::Ion => (0.95, 1.90, 7.2, 44_000.0, 19.0),
+        DamageKind::Tesla => (0.80, 1.60, 5.0, 34_000.0, 16.0),
+        DamageKind::Nuke => (2.20, 4.20, 10.5, 130_000.0, 38.0),
+        DamageKind::Enemy => (0.75, 1.50, 3.8, 22_000.0, 13.0),
     }
 }
 
@@ -2250,10 +2234,10 @@ fn spawn_impact_fx(
     power: f32,
 ) {
     let style = style % assets.fx_materials.len();
-    let light_intensity = 110_000.0 * power;
-    let light_range = 30.0 * power;
-    let core_scale = Vec3::splat(0.35 * power);
-    let end_core = Vec3::splat(3.4 * power);
+    let light_intensity = 85_000.0 * power;
+    let light_range = 24.0 * power;
+    let core_scale = Vec3::splat(0.18 * power);
+    let end_core = Vec3::splat(1.6 * power);
 
     commands.spawn((
         Name::new("Energy impact core"),
@@ -2264,15 +2248,13 @@ fn spawn_impact_fx(
             color: fx_color(style),
             intensity: light_intensity,
             range: light_range,
-            radius: 0.45 * power,
-            shadows_enabled: true,
-            shadow_depth_bias: 0.05,
-            shadow_normal_bias: 0.6,
+            radius: 0.25 * power,
+            shadows_enabled: false,
             ..default()
         },
         CombatFx {
             age: 0.0,
-            duration: 0.22 + power * 0.04,
+            duration: 0.16 + power * 0.03,
             start_scale: core_scale,
             end_scale: end_core,
             peak_light: light_intensity,
@@ -2280,25 +2262,8 @@ fn spawn_impact_fx(
         RunEntity,
     ));
 
-    let bloom_scale = Vec3::splat(0.85 * power);
-    let end_bloom = Vec3::splat(6.8 * power);
-    commands.spawn((
-        Name::new("Energy impact bloom"),
-        Mesh3d(assets.flash.clone()),
-        MeshMaterial3d(assets.fx_materials[style].clone()),
-        Transform::from_translation(position).with_scale(bloom_scale),
-        CombatFx {
-            age: 0.0,
-            duration: 0.38 + power * 0.06,
-            start_scale: bloom_scale,
-            end_scale: end_bloom,
-            peak_light: 0.0,
-        },
-        RunEntity,
-    ));
-
-    let ring_scale = Vec3::splat(0.45 * power);
-    let end_ring = Vec3::splat(5.8 * power);
+    let ring_scale = Vec3::splat(0.22 * power);
+    let end_ring = Vec3::splat(3.6 * power);
     commands.spawn((
         Name::new("Energy impact ring"),
         Mesh3d(assets.ring.clone()),
@@ -2306,7 +2271,7 @@ fn spawn_impact_fx(
         Transform::from_translation(position + Vec3::Y * 0.08).with_scale(ring_scale),
         CombatFx {
             age: 0.0,
-            duration: 0.30 + power * 0.05,
+            duration: 0.22 + power * 0.04,
             start_scale: ring_scale,
             end_scale: end_ring,
             peak_light: 0.0,

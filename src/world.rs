@@ -53,45 +53,58 @@ pub fn setup_viewer_scene(
             },
         ),
         Bloom {
-            intensity: 0.45,
+            intensity: 0.32,
             ..default()
         },
         DistanceFog {
-            color: Color::srgba(0.18, 0.24, 0.32, 1.0),
-            directional_light_color: Color::srgb(1.0, 0.92, 0.75),
-            directional_light_exponent: 24.0,
+            color: Color::srgba(0.22, 0.28, 0.36, 1.0),
+            directional_light_color: Color::srgb(1.0, 0.94, 0.82),
+            directional_light_exponent: 32.0,
             falloff: FogFalloff::Linear {
-                start: 380.0,
-                end: 950.0,
+                start: 420.0,
+                end: 1_200.0,
             },
         },
         AmbientLight {
-            color: Color::srgb(0.55, 0.65, 0.75),
-            brightness: 180.0,
+            color: Color::srgb(0.60, 0.68, 0.76),
+            brightness: 650.0,
             ..default()
         },
         camera_transform,
         VoxelViewerCameraTag,
     ));
 
+    // Primary Sun Directional Light (Astra-Imperium Realistic Sun)
     commands.spawn((
-        Name::new("Critical Point Sun"),
+        Name::new("Astra Realistic Sun"),
         DirectionalLight {
-            color: Color::srgb(1.0, 0.90, 0.72),
-            illuminance: 12_000.0,
+            color: Color::srgb(1.0, 0.94, 0.82),
+            illuminance: 24_000.0,
             shadows_enabled: true,
-            shadow_depth_bias: 0.018,
-            shadow_normal_bias: 0.65,
+            shadow_depth_bias: 0.015,
+            shadow_normal_bias: 0.55,
             ..default()
         },
-        Transform::from_xyz(-180.0, 320.0, 140.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(-240.0, 380.0, 160.0).looking_at(Vec3::ZERO, Vec3::Y),
         CascadeShadowConfigBuilder {
-            first_cascade_far_bound: 70.0,
-            maximum_distance: 380.0,
+            first_cascade_far_bound: 80.0,
+            maximum_distance: 420.0,
             ..default()
         }
         .build(),
         VoxelViewerSunTag,
+    ));
+
+    // Secondary Camera Fill Light (Astra-Imperium Soft Shadow Illumination)
+    commands.spawn((
+        Name::new("Astra Camera Fill Light"),
+        DirectionalLight {
+            color: Color::srgb(0.92, 0.95, 1.0),
+            illuminance: 4_500.0,
+            shadows_enabled: false,
+            ..default()
+        },
+        Transform::from_xyz(160.0, 220.0, -180.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
     commands.spawn((
