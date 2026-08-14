@@ -1683,18 +1683,18 @@ fn spawn_shot(
         .spawn((
             Name::new("Energy projectile core"),
             Mesh3d(assets.shot.clone()),
-            MeshMaterial3d(assets.materials[material].clone()),
-            Transform::from_translation(origin).with_scale(Vec3::splat(core_size)),
+            MeshMaterial3d(assets.fx_core_materials[style].clone()),
+            Transform::from_translation(origin).with_scale(Vec3::splat(core_size * 0.75)),
             PointLight {
                 color: fx_color(style),
                 intensity: light_intensity,
                 range: light_range,
-                radius: 0.16 * core_size,
+                radius: 0.35 * core_size,
                 shadows_enabled: false,
                 ..default()
             },
             ProjectileVisual {
-                base_scale: Vec3::splat(core_size),
+                base_scale: Vec3::splat(core_size * 0.75),
                 light_intensity,
                 light_range,
                 phase,
@@ -1707,52 +1707,63 @@ fn spawn_shot(
             RunEntity,
         ))
         .with_children(|projectile| {
+            // Layer 1: Vibrant saturated inner plasma sheath
             projectile.spawn((
-                Name::new("Projectile energy halo"),
+                Name::new("Projectile inner plasma sheath"),
+                Mesh3d(assets.shot.clone()),
+                MeshMaterial3d(assets.materials[material].clone()),
+                Transform::from_scale(Vec3::splat(1.45)),
+            ));
+            // Layer 2: Wide soft glowing radiant aura (Volumetric Bloom flare)
+            projectile.spawn((
+                Name::new("Projectile soft energy aura"),
                 Mesh3d(assets.flash.clone()),
                 MeshMaterial3d(assets.fx_materials[style].clone()),
-                Transform::from_scale(Vec3::splat(halo_size)),
+                Transform::from_scale(Vec3::splat(halo_size * 2.4)),
                 ProjectileHalo {
-                    base_scale: Vec3::splat(halo_size),
+                    base_scale: Vec3::splat(halo_size * 2.4),
                     spin: 2.8,
-                    pulse: 0.12,
+                    pulse: 0.14,
                     phase,
                 },
             ));
+            // Layer 3: Secondary outer atmospheric glow ring
             projectile.spawn((
-                Name::new("Projectile containment ring"),
+                Name::new("Projectile corona ring"),
                 Mesh3d(assets.ring.clone()),
-                MeshMaterial3d(assets.fx_core_materials[style].clone()),
+                MeshMaterial3d(assets.fx_materials[style].clone()),
                 Transform {
                     translation: Vec3::ZERO,
                     rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                    scale: Vec3::splat(core_size * 0.92),
+                    scale: Vec3::splat(halo_size * 1.8),
                 },
                 ProjectileHalo {
-                    base_scale: Vec3::splat(core_size * 0.92),
-                    spin: -7.6,
-                    pulse: 0.08,
-                    phase: phase + 1.7,
+                    base_scale: Vec3::splat(halo_size * 1.8),
+                    spin: -6.0,
+                    pulse: 0.10,
+                    phase: phase + 1.5,
                 },
             ));
+            // Layer 4: Sleek tapered plasma tail
             projectile.spawn((
                 Name::new("Projectile plasma tail"),
                 Mesh3d(assets.beam.clone()),
                 MeshMaterial3d(assets.fx_materials[style].clone()),
                 Transform::from_translation(Vec3::Z * -tail_length * 0.48).with_scale(Vec3::new(
-                    core_size * 0.38,
-                    core_size * 0.38,
+                    core_size * 0.65,
+                    core_size * 0.65,
                     tail_length,
                 )),
             ));
+            // Layer 5: Hot white-hot needle center tail
             projectile.spawn((
-                Name::new("Projectile hot tail"),
+                Name::new("Projectile hot core tail"),
                 Mesh3d(assets.beam.clone()),
                 MeshMaterial3d(assets.fx_core_materials[style].clone()),
                 Transform::from_translation(Vec3::Z * -tail_length * 0.44).with_scale(Vec3::new(
-                    core_size * 0.13,
-                    core_size * 0.13,
-                    tail_length * 0.86,
+                    core_size * 0.22,
+                    core_size * 0.22,
+                    tail_length * 0.90,
                 )),
             ));
         });
@@ -1760,12 +1771,12 @@ fn spawn_shot(
 
 fn projectile_visual_profile(kind: DamageKind) -> (f32, f32, f32, f32, f32) {
     match kind {
-        DamageKind::Pulse => (0.75, 1.35, 3.5, 24_000.0, 14.0),
-        DamageKind::Plasma => (1.65, 2.25, 6.5, 48_000.0, 22.0),
-        DamageKind::Ion => (1.10, 1.65, 7.5, 32_000.0, 18.0),
-        DamageKind::Tesla => (0.95, 1.50, 5.5, 28_000.0, 16.0),
-        DamageKind::Nuke => (2.50, 3.20, 11.0, 85_000.0, 32.0),
-        DamageKind::Enemy => (0.85, 1.35, 4.2, 18_000.0, 12.0),
+        DamageKind::Pulse => (0.65, 1.80, 3.8, 32_000.0, 16.0),
+        DamageKind::Plasma => (1.75, 4.20, 7.2, 95_000.0, 30.0),
+        DamageKind::Ion => (1.15, 2.80, 8.2, 52_000.0, 22.0),
+        DamageKind::Tesla => (0.95, 2.40, 6.0, 42_000.0, 19.0),
+        DamageKind::Nuke => (2.80, 6.50, 12.5, 160_000.0, 45.0),
+        DamageKind::Enemy => (0.85, 2.10, 4.4, 28_000.0, 15.0),
     }
 }
 
@@ -2239,10 +2250,10 @@ fn spawn_impact_fx(
     power: f32,
 ) {
     let style = style % assets.fx_materials.len();
-    let light_intensity = 75_000.0 * power;
-    let light_range = 24.0 * power;
-    let core_scale = Vec3::splat(0.28 * power);
-    let end_core = Vec3::splat(2.5 * power);
+    let light_intensity = 110_000.0 * power;
+    let light_range = 30.0 * power;
+    let core_scale = Vec3::splat(0.35 * power);
+    let end_core = Vec3::splat(3.4 * power);
 
     commands.spawn((
         Name::new("Energy impact core"),
@@ -2253,7 +2264,7 @@ fn spawn_impact_fx(
             color: fx_color(style),
             intensity: light_intensity,
             range: light_range,
-            radius: 0.35 * power,
+            radius: 0.45 * power,
             shadows_enabled: true,
             shadow_depth_bias: 0.05,
             shadow_normal_bias: 0.6,
@@ -2269,8 +2280,8 @@ fn spawn_impact_fx(
         RunEntity,
     ));
 
-    let bloom_scale = Vec3::splat(0.55 * power);
-    let end_bloom = Vec3::splat(4.6 * power);
+    let bloom_scale = Vec3::splat(0.85 * power);
+    let end_bloom = Vec3::splat(6.8 * power);
     commands.spawn((
         Name::new("Energy impact bloom"),
         Mesh3d(assets.flash.clone()),
@@ -2278,7 +2289,7 @@ fn spawn_impact_fx(
         Transform::from_translation(position).with_scale(bloom_scale),
         CombatFx {
             age: 0.0,
-            duration: 0.35 + power * 0.05,
+            duration: 0.38 + power * 0.06,
             start_scale: bloom_scale,
             end_scale: end_bloom,
             peak_light: 0.0,
@@ -2286,8 +2297,8 @@ fn spawn_impact_fx(
         RunEntity,
     ));
 
-    let ring_scale = Vec3::splat(0.30 * power);
-    let end_ring = Vec3::splat(4.2 * power);
+    let ring_scale = Vec3::splat(0.45 * power);
+    let end_ring = Vec3::splat(5.8 * power);
     commands.spawn((
         Name::new("Energy impact ring"),
         Mesh3d(assets.ring.clone()),
@@ -2295,7 +2306,7 @@ fn spawn_impact_fx(
         Transform::from_translation(position + Vec3::Y * 0.08).with_scale(ring_scale),
         CombatFx {
             age: 0.0,
-            duration: 0.28 + power * 0.05,
+            duration: 0.30 + power * 0.05,
             start_scale: ring_scale,
             end_scale: end_ring,
             peak_light: 0.0,

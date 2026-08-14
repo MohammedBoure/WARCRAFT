@@ -40,7 +40,7 @@ pub fn setup_viewer_scene(
         Hdr,
         Msaa::Off,
         Smaa::default(),
-        Tonemapping::AgX,
+        Tonemapping::TonyMcMapface,
         ColorGrading::with_identical_sections(
             ColorGradingGlobal {
                 exposure: 0.0,
@@ -53,7 +53,7 @@ pub fn setup_viewer_scene(
             },
         ),
         Bloom {
-            intensity: 0.36,
+            intensity: 0.45,
             ..default()
         },
         DistanceFog {
