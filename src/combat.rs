@@ -1,5 +1,7 @@
 use astra_voxel_world::prelude::*;
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::gameplay::{MissionTarget, MissionTargetKind, RelayDestroyed, RunEntity, finish_run};
 use crate::interaction::{
@@ -85,9 +87,11 @@ pub struct CombatAssets {
     beam: Handle<Mesh>,
     ring: Handle<Mesh>,
     spark: Handle<Mesh>,
+    glow_quad: Handle<Mesh>,
     materials: Vec<Handle<StandardMaterial>>,
     fx_materials: Vec<Handle<StandardMaterial>>,
     fx_core_materials: Vec<Handle<StandardMaterial>>,
+    glow_materials: Vec<Handle<StandardMaterial>>,
     enemy_scenes: Vec<Handle<Scene>>,
     weapon_scenes: Vec<Handle<Scene>>,
     pub white_outline_material: Handle<StandardMaterial>,
@@ -296,6 +300,66 @@ pub fn setup_combat_assets(
         ..default()
     });
 
+    let mut glow_image_data = Vec::with_capacity(128 * 128 * 4);
+    for y in 0..128 {
+        for x in 0..128 {
+            let dx = (x as f32 + 0.5 - 64.0) / 64.0;
+            let dy = (y as f32 + 0.5 - 64.0) / 64.0;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist >= 1.0 {
+                glow_image_data.extend_from_slice(&[255, 255, 255, 0]);
+            } else {
+                let factor = (1.0 - dist).powf(1.6);
+                let alpha = (factor * 255.0).clamp(0.0, 255.0) as u8;
+                glow_image_data.extend_from_slice(&[255, 255, 255, alpha]);
+            }
+        }
+    }
+    let glow_texture = asset_server.add(Image::new(
+        Extent3d {
+            width: 128,
+            height: 128,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        glow_image_data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+    ));
+
+    let glow_colors = [
+        (
+            Color::srgba(0.20, 0.95, 1.0, 0.95),
+            LinearRgba::rgb(45.0, 180.0, 260.0),
+        ),
+        (
+            Color::srgba(1.0, 0.22, 0.85, 0.95),
+            LinearRgba::rgb(260.0, 48.0, 160.0),
+        ),
+        (
+            Color::srgba(0.30, 0.65, 1.0, 0.95),
+            LinearRgba::rgb(55.0, 140.0, 280.0),
+        ),
+        (
+            Color::srgba(1.0, 0.20, 0.08, 0.95),
+            LinearRgba::rgb(220.0, 36.0, 18.0),
+        ),
+    ];
+    let glow_materials = glow_colors
+        .into_iter()
+        .map(|(base_color, emissive)| {
+            materials.add(StandardMaterial {
+                base_color,
+                base_color_texture: Some(glow_texture.clone()),
+                emissive,
+                unlit: true,
+                alpha_mode: AlphaMode::Add,
+                cull_mode: None,
+                ..default()
+            })
+        })
+        .collect();
+
     commands.insert_resource(CombatAssets {
         shield: meshes.add(Sphere::new(3.6).mesh().ico(3).expect("sphere")),
         shield_material,
@@ -304,9 +368,11 @@ pub fn setup_combat_assets(
         beam: meshes.add(Cuboid::new(0.14, 0.14, 1.0)),
         ring: meshes.add(Annulus::new(0.92, 1.00)),
         spark: meshes.add(Cuboid::new(0.08, 0.08, 0.62)),
+        glow_quad: meshes.add(Rectangle::new(1.0, 1.0)),
         materials: created_materials,
         fx_materials,
         fx_core_materials,
+        glow_materials,
         enemy_scenes: [
             "models/kenney-space/alien.glb",
             "models/kenney-space/astronautB.glb",
@@ -1728,7 +1794,35 @@ fn spawn_shot(
                 MeshMaterial3d(assets.materials[material].clone()),
                 Transform::from_scale(Vec3::splat(1.35)),
             ));
-            // Layer 2: Sleek tapered plasma tail
+            // Layer 2: Soft Radial Gradient Glow Flare (Omnidirectional 3D Aura)
+            let flare_size = _halo_size * 2.8;
+            projectile.spawn((
+                Name::new("Projectile glow flare H"),
+                Mesh3d(assets.glow_quad.clone()),
+                MeshMaterial3d(assets.glow_materials[style].clone()),
+                Transform::from_scale(Vec3::splat(flare_size)),
+            ));
+            projectile.spawn((
+                Name::new("Projectile glow flare V"),
+                Mesh3d(assets.glow_quad.clone()),
+                MeshMaterial3d(assets.glow_materials[style].clone()),
+                Transform {
+                    translation: Vec3::ZERO,
+                    rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                    scale: Vec3::splat(flare_size),
+                },
+            ));
+            projectile.spawn((
+                Name::new("Projectile glow flare Flat"),
+                Mesh3d(assets.glow_quad.clone()),
+                MeshMaterial3d(assets.glow_materials[style].clone()),
+                Transform {
+                    translation: Vec3::ZERO,
+                    rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                    scale: Vec3::splat(flare_size),
+                },
+            ));
+            // Layer 3: Sleek tapered plasma tail
             projectile.spawn((
                 Name::new("Projectile plasma tail"),
                 Mesh3d(assets.beam.clone()),
@@ -1739,7 +1833,7 @@ fn spawn_shot(
                     tail_length,
                 )),
             ));
-            // Layer 3: Hot needle center tail
+            // Layer 4: Hot needle center tail
             projectile.spawn((
                 Name::new("Projectile hot core tail"),
                 Mesh3d(assets.beam.clone()),
@@ -2279,18 +2373,22 @@ fn spawn_impact_fx(
         RunEntity,
     ));
 
-    let hot_ring_scale = Vec3::splat(0.18 * power);
-    let end_hot_ring = Vec3::splat(2.8 * power);
+    let flare_scale = Vec3::splat(0.50 * power);
+    let end_flare = Vec3::splat(5.5 * power);
     commands.spawn((
-        Name::new("Energy impact hot ring"),
-        Mesh3d(assets.ring.clone()),
-        MeshMaterial3d(assets.fx_core_materials[style].clone()),
-        Transform::from_translation(position + Vec3::Y * 0.12).with_scale(hot_ring_scale),
+        Name::new("Energy impact radial flare"),
+        Mesh3d(assets.glow_quad.clone()),
+        MeshMaterial3d(assets.glow_materials[style].clone()),
+        Transform {
+            translation: position + Vec3::Y * 0.12,
+            rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            scale: flare_scale,
+        },
         CombatFx {
             age: 0.0,
-            duration: 0.20 + power * 0.035,
-            start_scale: hot_ring_scale,
-            end_scale: end_hot_ring,
+            duration: 0.25 + power * 0.04,
+            start_scale: flare_scale,
+            end_scale: end_flare,
             peak_light: 0.0,
         },
         RunEntity,

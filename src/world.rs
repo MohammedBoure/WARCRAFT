@@ -7,7 +7,7 @@ use bevy::{
     core_pipeline::tonemapping::Tonemapping,
     input::mouse::{MouseScrollUnit, MouseWheel},
     light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap},
-    post_process::bloom::Bloom,
+    post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter},
     prelude::*,
     render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection, Hdr},
 };
@@ -53,7 +53,15 @@ pub fn setup_viewer_scene(
             },
         ),
         Bloom {
-            intensity: 0.32,
+            intensity: 0.45,
+            low_frequency_boost: 0.70,
+            low_frequency_boost_curvature: 0.95,
+            high_pass_frequency: 1.0,
+            prefilter: BloomPrefilter {
+                threshold: 0.05,
+                threshold_softness: 0.20,
+            },
+            composite_mode: BloomCompositeMode::Additive,
             ..default()
         },
         DistanceFog {
