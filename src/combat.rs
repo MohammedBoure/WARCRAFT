@@ -921,9 +921,12 @@ pub fn update_enemy_visuals(
     time: Res<Time>,
     aim: Res<AimSolution>,
     session: Option<Res<GameSession>>,
+    loaded: Res<LoadedVoxelChunks>,
+    world: Res<VoxelViewerWorld>,
+    camera_query: Query<&Transform, (With<VoxelViewerCameraTag>, Without<BossShieldVisual>)>,
     enemies: Query<
         (Entity, &Enemy, &CombatTarget, &Transform),
-        (Without<BossShieldVisual>, Without<TargetOutlineModel>),
+        (Without<BossShieldVisual>, Without<TargetOutlineModel>, Without<VoxelViewerCameraTag>),
     >,
     mut gizmos: Gizmos,
     mut outlines: Query<
@@ -932,10 +935,18 @@ pub fn update_enemy_visuals(
     >,
     mut shields: Query<
         (&ChildOf, &BossShieldVisual, &mut Transform, &mut Visibility),
-        (Without<Enemy>, Without<TargetOutlineModel>),
+        (Without<Enemy>, Without<TargetOutlineModel>, Without<VoxelViewerCameraTag>),
     >,
 ) {
     let elapsed = time.elapsed_secs();
+    let camera_transform = camera_query.single().ok();
+    let camera_right = camera_transform
+        .map(|c| c.right().as_vec3())
+        .unwrap_or(Vec3::X);
+    let camera_rotation = camera_transform
+        .map(|c| c.rotation)
+        .unwrap_or(Quat::IDENTITY);
+
     for (parent, mut visibility) in &mut outlines {
         let is_target = aim.enemy == Some(parent.parent());
         *visibility = if is_target {
@@ -951,16 +962,26 @@ pub fn update_enemy_visuals(
         } else {
             1.0
         };
-        let iso = Isometry3d::new(
-            transform.translation + Vec3::Y * 0.1,
+
+        // Ground-projected target circle (aligned directly on terrain surface)
+        let ground_y = ground_height(&loaded, &world, transform.translation.x, transform.translation.z);
+        let ground_iso = Isometry3d::new(
+            Vec3::new(transform.translation.x, ground_y + 0.12, transform.translation.z),
             Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
         );
         if is_targeted {
-            gizmos.circle(iso, target.radius * pulse, Color::srgb(1.0, 0.25, 0.25));
-            gizmos.circle(iso, target.radius * 0.5 * pulse, Color::WHITE);
+            gizmos.circle(ground_iso, target.radius * pulse, Color::srgb(1.0, 0.25, 0.25));
+            gizmos.circle(ground_iso, target.radius * 0.5 * pulse, Color::WHITE);
+
+            // For aerial enemies, also draw a camera-facing 3D targeting reticle directly around the model
+            if target.aerial {
+                let body_iso = Isometry3d::new(transform.translation, camera_rotation);
+                gizmos.circle(body_iso, target.radius * 1.15 * pulse, Color::srgba(1.0, 0.35, 0.35, 0.9));
+                gizmos.circle(body_iso, target.radius * 0.6 * pulse, Color::srgba(1.0, 1.0, 1.0, 0.8));
+            }
         }
 
-        // Overhead 3D Health Bar (only for targeted, damaged, or boss)
+        // Overhead 3D Health Bar Billboard (faces camera perfectly)
         let hp_ratio = (enemy.health / enemy.max_health).clamp(0.0, 1.0);
         if is_targeted || enemy.kind == EnemyKind::CarrierBoss || hp_ratio < 0.99 {
             let head_y = match enemy.kind {
@@ -976,9 +997,9 @@ pub fn update_enemy_visuals(
                 EnemyKind::Brute => 1.4,
                 _ => 0.9,
             };
-            let start_pos = bar_center - Vec3::X * bar_half_width;
-            let hp_pos = start_pos + Vec3::X * (bar_half_width * 2.0 * hp_ratio);
-            let end_pos = start_pos + Vec3::X * (bar_half_width * 2.0);
+            let start_pos = bar_center - camera_right * bar_half_width;
+            let hp_pos = start_pos + camera_right * (bar_half_width * 2.0 * hp_ratio);
+            let end_pos = start_pos + camera_right * (bar_half_width * 2.0);
 
             if hp_ratio > 0.0 {
                 gizmos.line(start_pos, hp_pos, Color::srgb(0.2, 0.9, 0.3));
@@ -989,8 +1010,14 @@ pub fn update_enemy_visuals(
         }
     }
     if let Some(aim_pt) = aim.aim_point {
+        let ground_y = ground_height(&loaded, &world, aim_pt.x, aim_pt.z);
+        let draw_y = if aim.enemy.is_some() {
+            aim_pt.y + 0.1
+        } else {
+            ground_y + 0.15
+        };
         let iso = Isometry3d::new(
-            aim_pt + Vec3::Y * 0.15,
+            Vec3::new(aim_pt.x, draw_y, aim_pt.z),
             Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
         );
         gizmos.circle(iso, 0.45, Color::srgb(1.0, 0.9, 0.2));
