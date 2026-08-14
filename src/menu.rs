@@ -252,7 +252,9 @@ pub fn handle_route_buttons(
 
 pub fn cleanup_screen(mut commands: Commands, screens: Query<Entity, With<ScreenRoot>>) {
     for entity in &screens {
-        commands.entity(entity).despawn();
+        if let Ok(mut cmd) = commands.get_entity(entity) {
+            cmd.despawn();
+        }
     }
 }
 

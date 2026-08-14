@@ -1228,7 +1228,7 @@ pub fn update_projectiles(
                 trail.style,
                 if shot.area > 0.0 { 1.8 } else { 0.55 },
             );
-            commands.entity(entity).despawn();
+            if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
             continue;
         }
         if let Some(target) = shot.target
@@ -1336,7 +1336,7 @@ pub fn update_projectiles(
                 trail.style,
                 if shot.area > 0.0 { 2.1 } else { 0.85 },
             );
-            commands.entity(entity).despawn();
+            if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
             continue;
         }
         transform.translation = end;
@@ -1545,7 +1545,7 @@ pub fn process_damage(
                             radius: crater_radius,
                         });
                         invalidate_edit(&mut commands, &mut loaded, block_pos, crater_radius as i32);
-                        commands.entity(entity).despawn();
+                        if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
                         session.loadout.kills += 1;
                         let points_earned = kind.point_value();
                         session.loadout.add_points(points_earned);
@@ -1578,7 +1578,7 @@ pub fn process_damage(
                                 1,
                                 3.0,
                             );
-                            commands.entity(entity).despawn();
+                            if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
                             writers.relays.write(RelayDestroyed(index));
                         }
                         MissionTargetKind::HomeCore | MissionTargetKind::Ship => {
@@ -1806,7 +1806,7 @@ pub fn sync_player_weapon_visual(
     }
     if desired.is_none() {
         for entity in &visuals {
-            commands.entity(entity).despawn();
+            if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
         }
         *active = None;
         return;
@@ -1821,7 +1821,7 @@ pub fn sync_player_weapon_visual(
         return;
     };
     for entity in &visuals {
-        commands.entity(entity).despawn();
+        if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
     }
     let Some(weapon) = desired else {
         return;
@@ -1972,7 +1972,7 @@ pub fn update_combat_effects(
         effect.age += dt;
         let progress = (effect.age / effect.duration.max(0.001)).clamp(0.0, 1.0);
         if progress >= 1.0 {
-            commands.entity(entity).despawn();
+            if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
             continue;
         }
         let eased = 1.0 - (1.0 - progress).powi(2);

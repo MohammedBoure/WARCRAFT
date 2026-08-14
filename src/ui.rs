@@ -538,7 +538,7 @@ pub fn update_perk_modal(
 ) {
     let Some(choices) = session.pending_perk_choices else {
         for entity in &modal_query {
-            commands.entity(entity).despawn();
+            if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
         }
         return;
     };
@@ -566,7 +566,7 @@ pub fn update_perk_modal(
         }
         session.pending_perk_choices = None;
         for entity in &modal_query {
-            commands.entity(entity).despawn();
+            if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
         }
         return;
     }

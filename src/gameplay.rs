@@ -140,7 +140,9 @@ pub fn prepare_new_run(
         return;
     }
     for entity in &old_entities {
-        commands.entity(entity).despawn();
+        if let Ok(mut cmd) = commands.get_entity(entity) {
+            cmd.despawn();
+        }
     }
     let route = session.route;
     apply_planet_profile(&mut world, route);

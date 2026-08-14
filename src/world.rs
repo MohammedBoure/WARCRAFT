@@ -384,7 +384,7 @@ pub fn retire_chunks_outside_plan(commands: &mut Commands, loaded: &mut LoadedVo
             continue;
         }
         if let Some(entity) = loaded.chunks.remove(&coord) {
-            commands.entity(entity).despawn();
+            if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
             loaded.voxel_data.remove(&coord);
             retired += 1;
         }
@@ -407,7 +407,7 @@ pub fn invalidate_edit(
         for x in min_x..=max_x {
             let coord = VoxelChunkCoord::new(x, z);
             if let Some(entity) = loaded.chunks.remove(&coord) {
-                commands.entity(entity).despawn();
+                if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
             }
             loaded.voxel_data.remove(&coord);
             loaded.dirty.insert(coord);
@@ -420,7 +420,7 @@ pub fn invalidate_edit(
 
 pub fn reload_loaded_chunks(commands: &mut Commands, loaded: &mut LoadedVoxelChunks) {
     for entity in std::mem::take(&mut loaded.chunks).into_values() {
-        commands.entity(entity).despawn();
+        if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
     }
     loaded.voxel_data.clear();
     loaded.desired.clear();
