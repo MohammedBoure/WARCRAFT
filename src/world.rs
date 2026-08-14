@@ -43,51 +43,51 @@ pub fn setup_viewer_scene(
         Tonemapping::TonyMcMapface,
         ColorGrading::with_identical_sections(
             ColorGradingGlobal {
-                exposure: 0.0,
-                post_saturation: 1.15,
+                exposure: -0.25,
+                post_saturation: 1.10,
                 ..default()
             },
             ColorGradingSection {
-                saturation: 1.08,
+                saturation: 1.05,
                 ..default()
             },
         ),
         Bloom {
-            intensity: 0.45,
-            low_frequency_boost: 0.70,
-            low_frequency_boost_curvature: 0.95,
+            intensity: 0.35,
+            low_frequency_boost: 0.50,
+            low_frequency_boost_curvature: 0.85,
             high_pass_frequency: 1.0,
             prefilter: BloomPrefilter {
-                threshold: 0.05,
+                threshold: 1.15,
                 threshold_softness: 0.20,
             },
-            composite_mode: BloomCompositeMode::Additive,
+            composite_mode: BloomCompositeMode::EnergyConserving,
             ..default()
         },
         DistanceFog {
-            color: Color::srgba(0.22, 0.28, 0.36, 1.0),
+            color: Color::srgba(0.20, 0.25, 0.32, 1.0),
             directional_light_color: Color::srgb(1.0, 0.94, 0.82),
             directional_light_exponent: 32.0,
             falloff: FogFalloff::Linear {
-                start: 420.0,
-                end: 1_200.0,
+                start: 450.0,
+                end: 1_400.0,
             },
         },
         AmbientLight {
-            color: Color::srgb(0.60, 0.68, 0.76),
-            brightness: 650.0,
+            color: Color::srgb(0.55, 0.65, 0.75),
+            brightness: 260.0,
             ..default()
         },
         camera_transform,
         VoxelViewerCameraTag,
     ));
 
-    // Primary Sun Directional Light (Astra-Imperium Realistic Sun)
+    // Primary Sun Directional Light (Astra-Imperium Balanced Sun)
     commands.spawn((
         Name::new("Astra Realistic Sun"),
         DirectionalLight {
             color: Color::srgb(1.0, 0.94, 0.82),
-            illuminance: 24_000.0,
+            illuminance: 16_000.0,
             shadows_enabled: true,
             shadow_depth_bias: 0.015,
             shadow_normal_bias: 0.55,
@@ -103,12 +103,12 @@ pub fn setup_viewer_scene(
         VoxelViewerSunTag,
     ));
 
-    // Secondary Camera Fill Light (Astra-Imperium Soft Shadow Illumination)
+    // Secondary Camera Fill Light (Soft Shadow Illumination)
     commands.spawn((
         Name::new("Astra Camera Fill Light"),
         DirectionalLight {
-            color: Color::srgb(0.92, 0.95, 1.0),
-            illuminance: 4_500.0,
+            color: Color::srgb(0.90, 0.94, 1.0),
+            illuminance: 2_400.0,
             shadows_enabled: false,
             ..default()
         },
