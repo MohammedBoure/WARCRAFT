@@ -194,6 +194,15 @@ fn append_column_surface(
         append_surface_resource_marker(builder, block, x0, z0, y, world_x, world_z, style);
     }
 
+    let mut bottom_solid_y = top_height;
+    while bottom_solid_y > 0
+        && chunk
+            .get(sample_x, (bottom_solid_y - 1) as usize, sample_z)
+            .is_some_and(|block| block.is_solid())
+    {
+        bottom_solid_y -= 1;
+    }
+
     let sample_step = cell_blocks as i64;
     for (dx, dz, face) in [
         (-sample_step, 0, FaceDirection::West),
@@ -229,7 +238,8 @@ fn append_column_surface(
             );
         }
 
-        if neighbor_height < top_height {
+        let effective_bottom = neighbor_height.max(bottom_solid_y);
+        if effective_bottom < top_height {
             append_side_face(
                 builder,
                 face,
@@ -237,7 +247,7 @@ fn append_column_surface(
                 z0,
                 cell_size,
                 y,
-                neighbor_height as f32 * style.height_scale,
+                effective_bottom as f32 * style.height_scale,
                 lit_terrain_color(visual.side_color, 0.95),
             );
         }

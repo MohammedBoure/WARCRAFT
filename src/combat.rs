@@ -3,7 +3,7 @@ use bevy::prelude::*;
 
 use crate::gameplay::{MissionTarget, MissionTargetKind, RelayDestroyed, RunEntity, finish_run};
 use crate::interaction::{
-    VoxelWorldEdits, block_world_center, ray_sphere_distance, voxel_raycast_loaded,
+    VoxelWorldEdits, block_world_center, voxel_raycast_loaded, world_to_block,
 };
 use crate::player::{PlayerModelRoot, PlayerTag};
 use crate::state::*;
@@ -20,7 +20,9 @@ pub struct CombatTarget {
 pub struct Enemy {
     pub kind: EnemyKind,
     pub health: f32,
+    pub max_health: f32,
     pub shield: f32,
+    pub max_shield: f32,
     speed: f32,
     attack: Timer,
 }
@@ -40,18 +42,24 @@ pub struct Projectile {
 
 #[derive(Resource)]
 pub struct EnemyDirector {
-    timer: Timer,
+    spawn_cooldown: f32,
+    intermission: f32,
     counter: u32,
-    boss_spawned: bool,
-    announced_wave: Option<u8>,
+    spawned: u32,
+    quota: u32,
+    wave_active: bool,
+    boss_wave: bool,
 }
 impl Default for EnemyDirector {
     fn default() -> Self {
         Self {
-            timer: Timer::from_seconds(2.0, TimerMode::Once),
+            spawn_cooldown: 0.0,
+            intermission: 3.0,
             counter: 0,
-            boss_spawned: false,
-            announced_wave: None,
+            spawned: 0,
+            quota: 0,
+            wave_active: false,
+            boss_wave: false,
         }
     }
 }
@@ -81,7 +89,11 @@ pub struct CombatAssets {
     fx_core_materials: Vec<Handle<StandardMaterial>>,
     enemy_scenes: Vec<Handle<Scene>>,
     weapon_scenes: Vec<Handle<Scene>>,
+    pub white_outline_material: Handle<StandardMaterial>,
 }
+
+#[derive(Component)]
+pub struct TargetOutlineModel;
 
 #[derive(Component)]
 pub struct WeaponVisual;
@@ -134,6 +146,12 @@ pub(crate) struct FxMotion {
     velocity: Vec3,
     drag: f32,
     gravity: f32,
+}
+
+#[derive(Component)]
+pub(crate) struct FxSpin {
+    axis: Vec3,
+    radians_per_second: f32,
 }
 
 #[derive(Component)]
@@ -211,20 +229,20 @@ pub fn setup_combat_assets(
         .collect();
     let fx_materials = [
         (
-            Color::srgba(0.22, 0.96, 1.0, 0.88),
-            LinearRgba::rgb(4.0, 13.0, 18.0),
+            Color::srgba(0.20, 0.95, 1.0, 0.88),
+            LinearRgba::rgb(25.0, 110.0, 150.0),
         ),
         (
-            Color::srgba(1.0, 0.18, 0.78, 0.86),
-            LinearRgba::rgb(18.0, 1.4, 11.0),
+            Color::srgba(1.0, 0.35, 0.10, 0.92),
+            LinearRgba::rgb(220.0, 55.0, 15.0),
         ),
         (
-            Color::srgba(0.38, 0.56, 1.0, 0.90),
-            LinearRgba::rgb(4.0, 8.0, 22.0),
+            Color::srgba(0.30, 0.65, 1.0, 0.90),
+            LinearRgba::rgb(35.0, 95.0, 180.0),
         ),
         (
-            Color::srgba(1.0, 0.16, 0.06, 0.86),
-            LinearRgba::rgb(18.0, 1.2, 0.25),
+            Color::srgba(1.0, 0.18, 0.10, 0.88),
+            LinearRgba::rgb(140.0, 22.0, 12.0),
         ),
     ]
     .map(|(base_color, emissive)| {
@@ -232,27 +250,27 @@ pub fn setup_combat_assets(
             base_color,
             emissive,
             unlit: true,
-            alpha_mode: AlphaMode::Add,
+            alpha_mode: AlphaMode::Blend,
             ..default()
         })
     })
     .to_vec();
     let fx_core_materials = [
         (
-            Color::srgb(0.70, 1.0, 1.0),
-            LinearRgba::rgb(12.0, 36.0, 48.0),
+            Color::srgba(0.85, 1.0, 1.0, 0.96),
+            LinearRgba::rgb(120.0, 320.0, 420.0),
         ),
         (
-            Color::srgb(1.0, 0.64, 0.94),
-            LinearRgba::rgb(44.0, 6.0, 27.0),
+            Color::srgba(1.0, 0.90, 0.65, 0.98),
+            LinearRgba::rgb(450.0, 240.0, 60.0),
         ),
         (
-            Color::srgb(0.72, 0.82, 1.0),
-            LinearRgba::rgb(12.0, 20.0, 54.0),
+            Color::srgba(0.85, 0.95, 1.0, 0.96),
+            LinearRgba::rgb(110.0, 260.0, 480.0),
         ),
         (
-            Color::srgb(1.0, 0.72, 0.38),
-            LinearRgba::rgb(46.0, 5.0, 0.6),
+            Color::srgba(1.0, 0.80, 0.50, 0.96),
+            LinearRgba::rgb(380.0, 90.0, 40.0),
         ),
     ]
     .map(|(base_color, emissive)| {
@@ -260,18 +278,18 @@ pub fn setup_combat_assets(
             base_color,
             emissive,
             unlit: true,
-            alpha_mode: AlphaMode::Add,
+            alpha_mode: AlphaMode::Blend,
             ..default()
         })
     })
     .to_vec();
 
     commands.insert_resource(CombatAssets {
-        shield: meshes.add(Sphere::new(8.5).mesh().ico(3).expect("sphere")),
+        shield: meshes.add(Sphere::new(3.6).mesh().ico(3).expect("sphere")),
         shot: meshes.add(Sphere::new(0.45).mesh().ico(1).expect("shot")),
         flash: meshes.add(Sphere::new(0.55).mesh().ico(2).expect("flash")),
         beam: meshes.add(Cuboid::new(0.14, 0.14, 1.0)),
-        ring: meshes.add(Torus::new(0.55, 0.78)),
+        ring: meshes.add(Annulus::new(0.92, 1.00)),
         spark: meshes.add(Cuboid::new(0.08, 0.08, 0.62)),
         materials: created_materials,
         fx_materials,
@@ -280,7 +298,7 @@ pub fn setup_combat_assets(
             "models/kenney-space/alien.glb",
             "models/kenney-space/astronautB.glb",
             "models/kenney-space/craft_speederA.glb",
-            "models/kenney-space/meteor_detailed.glb",
+            "models/kenney-space/astronautA.glb",
             "models/kenney-space/craft_miner.glb",
         ]
         .map(|path| asset_server.load(GltfAssetLabel::Scene(0).from_asset(path)))
@@ -292,6 +310,13 @@ pub fn setup_combat_assets(
         ]
         .map(|path| asset_server.load(GltfAssetLabel::Scene(0).from_asset(path)))
         .to_vec(),
+        white_outline_material: materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            emissive: LinearRgba::rgb(1.8, 1.8, 1.8),
+            unlit: true,
+            cull_mode: None,
+            ..default()
+        }),
     });
 }
 pub fn handle_weapon_crafting(
@@ -326,8 +351,8 @@ pub fn handle_weapon_crafting(
         return;
     }
     let level = session.loadout.weapon_level(weapon);
-    if let Some(recipe) = weapon_recipe(weapon, level)
-        && session.loadout.spend(recipe)
+    if let Some(cost) = weapon_point_cost(weapon, level)
+        && session.loadout.spend_points(cost)
     {
         session.loadout.weapon_levels.insert(weapon, level + 1);
         crafted.write(WeaponCrafted(weapon, level + 1));
@@ -401,64 +426,68 @@ pub fn handle_weapon_fire(
         WeaponKind::PulseRifle => {
             let end = aim_target_point;
             let direction = (end - origin).normalize_or_zero();
-            let hit_enemy = target.map(|(entity, _, _)| entity).or_else(|| {
-                targets.iter().find_map(|(entity, t_trans, t_data)| {
-                    if t_data.targetable
-                        && ray_sphere_distance(
-                            origin,
-                            direction,
-                            t_trans.translation(),
-                            t_data.radius + 1.2,
-                        )
-                        .is_some()
-                    {
-                        Some(entity)
-                    } else {
-                        None
-                    }
-                })
-            });
-            if let Some(entity) = hit_enemy {
-                damage.write(DamageEvent {
-                    target: DamageTarget::Enemy(entity),
-                    amount: 14.0 + level as f32 * 4.0,
-                    kind: DamageKind::Pulse,
-                });
+            let right = Vec3::new(-direction.z, 0.0, direction.x).normalize_or_zero();
+            let speed = 64.0;
+            let damage_amount = 16.0 + level as f32 * 5.0;
+
+            for &side_sign in &[-1.0f32, 1.0f32] {
+                let offset = right * (side_sign * 0.42);
+                let bolt_origin = origin + offset;
+                let bolt_velocity = (end - bolt_origin).normalize_or_zero() * speed;
+
+                spawn_shot(
+                    &mut commands,
+                    &assets,
+                    bolt_origin,
+                    bolt_velocity,
+                    0,
+                    Projectile {
+                        from_player: true,
+                        velocity: bolt_velocity,
+                        gravity: 0.0,
+                        damage: damage_amount * 0.5,
+                        kind: DamageKind::Pulse,
+                        life: Timer::from_seconds(1.8, TimerMode::Once),
+                        radius: 1.1,
+                        target: target.map(|(e, _, _)| e),
+                        area: 0.0,
+                    },
+                );
+                spawn_muzzle_fx(&mut commands, &assets, bolt_origin, direction, 0, 0.85);
             }
-            spawn_muzzle_fx(&mut commands, &assets, origin, direction, 0, 1.0);
-            spawn_tracer_fx(&mut commands, &assets, origin, end, 0, 0.72, 0.085);
-            spawn_impact_fx(&mut commands, &assets, end, 0, 0.72);
-            apply_weapon_recoil(&mut rigs, weapon, 0.42);
-            camera.shake = camera.shake.max(0.075);
-            runtime.cooldown = 0.14;
-            session.loadout.heat += 0.105;
+            apply_weapon_recoil(&mut rigs, weapon, 0.38);
+            camera.shake = camera.shake.max(0.08);
+            runtime.cooldown = 0.12;
+            session.loadout.heat += 0.08;
             sounds.write(GameSound::PulseShot);
         }
         WeaponKind::PlasmaMortar => {
             let point = aim_target_point;
-            let velocity = ballistic_velocity(origin, point, 38.0, 17.0);
+            let speed = 68.0;
+            let velocity = (point - origin).normalize_or_zero() * speed;
             spawn_shot(
                 &mut commands,
                 &assets,
                 origin,
                 velocity,
-                6,
+                1,
                 Projectile {
                     from_player: true,
                     velocity,
-                    gravity: 17.0,
-                    damage: 30.0 + level as f32 * 8.0,
+                    gravity: 0.0,
+                    damage: 32.0 + level as f32 * 9.0,
                     kind: DamageKind::Plasma,
-                    life: Timer::from_seconds(2.4, TimerMode::Once),
-                    radius: 1.0,
-                    target: None,
+                    life: Timer::from_seconds(2.5, TimerMode::Once),
+                    radius: 1.2,
+                    target: target.map(|(e, _, _)| e),
                     area: 7.5,
                 },
             );
-            apply_weapon_recoil(&mut rigs, weapon, 0.92);
-            camera.shake = camera.shake.max(0.22);
-            runtime.cooldown = 0.78;
-            session.loadout.heat += 0.27;
+            spawn_muzzle_fx(&mut commands, &assets, origin, velocity.normalize_or_zero(), 1, 1.4);
+            apply_weapon_recoil(&mut rigs, weapon, 0.85);
+            camera.shake = camera.shake.max(0.20);
+            runtime.cooldown = 0.65;
+            session.loadout.heat += 0.24;
             sounds.write(GameSound::PlasmaShot);
         }
         WeaponKind::IonLance => {
@@ -489,13 +518,74 @@ pub fn handle_weapon_fire(
             session.loadout.heat += 0.20;
             sounds.write(GameSound::IonShot);
         }
+        WeaponKind::QuantumTesla => {
+            let point = aim_target_point;
+            let locked_entity = target.map(|(entity, _, _)| entity);
+            let speed = 80.0;
+            let velocity = (point - origin).normalize_or_zero() * speed;
+            spawn_shot(
+                &mut commands,
+                &assets,
+                origin,
+                velocity,
+                0,
+                Projectile {
+                    from_player: true,
+                    velocity,
+                    gravity: 0.0,
+                    damage: 20.0 + level as f32 * 7.0,
+                    kind: DamageKind::Tesla,
+                    life: Timer::from_seconds(1.5, TimerMode::Once),
+                    radius: 1.5,
+                    target: locked_entity,
+                    area: 4.0,
+                },
+            );
+            spawn_muzzle_fx(&mut commands, &assets, origin, velocity.normalize_or_zero(), 0, 1.2);
+            apply_weapon_recoil(&mut rigs, weapon, 0.50);
+            camera.shake = camera.shake.max(0.12);
+            runtime.cooldown = 0.30;
+            session.loadout.heat += 0.15;
+            sounds.write(GameSound::PulseShot);
+        }
+        WeaponKind::NukeMortar => {
+            let point = aim_target_point;
+            let speed = 50.0;
+            let velocity = (point - origin).normalize_or_zero() * speed;
+            spawn_shot(
+                &mut commands,
+                &assets,
+                origin,
+                velocity,
+                1,
+                Projectile {
+                    from_player: true,
+                    velocity,
+                    gravity: 0.0,
+                    damage: 90.0 + level as f32 * 35.0,
+                    kind: DamageKind::Nuke,
+                    life: Timer::from_seconds(3.5, TimerMode::Once),
+                    radius: 2.0,
+                    target: target.map(|(e, _, _)| e),
+                    area: 15.0,
+                },
+            );
+            spawn_muzzle_fx(&mut commands, &assets, origin, velocity.normalize_or_zero(), 1, 2.2);
+            apply_weapon_recoil(&mut rigs, weapon, 1.20);
+            camera.shake = camera.shake.max(0.45);
+            runtime.cooldown = 1.80;
+            session.loadout.heat += 0.45;
+            sounds.write(GameSound::PlasmaShot);
+        }
     }
 }
 fn projectile_accepts_target(kind: DamageKind, aerial: bool) -> bool {
     match kind {
         DamageKind::Pulse | DamageKind::Enemy => true,
-        DamageKind::Plasma => !aerial,
-        DamageKind::Ion => aerial,
+        DamageKind::Plasma => true, // hits both aerial and ground after shield down
+        DamageKind::Ion => aerial,  // Ion only locks aerial targets
+        DamageKind::Tesla => true,
+        DamageKind::Nuke => true,
     }
 }
 
@@ -504,38 +594,27 @@ fn weapon_accepts_target(weapon: WeaponKind, aerial: bool) -> bool {
         WeaponKind::PulseRifle => true,
         WeaponKind::PlasmaMortar => !aerial,
         WeaponKind::IonLance => aerial,
+        WeaponKind::QuantumTesla => true,
+        WeaponKind::NukeMortar => !aerial,
     }
 }
 
-pub(crate) fn weapon_recipe(
-    weapon: WeaponKind,
-    level: u8,
-) -> Option<&'static [(ResourceKind, u16)]> {
+pub(crate) fn weapon_point_cost(weapon: WeaponKind, level: u8) -> Option<u32> {
     match (weapon, level) {
-        (WeaponKind::PulseRifle, 1) => {
-            Some(&[(ResourceKind::SpaceIron, 4), (ResourceKind::Titanium, 2)])
-        }
-        (WeaponKind::PulseRifle, 2) => {
-            Some(&[(ResourceKind::SpaceIron, 6), (ResourceKind::Helium3, 2)])
-        }
-        (WeaponKind::PlasmaMortar, 0) => {
-            Some(&[(ResourceKind::Titanium, 5), (ResourceKind::BioPlasma, 3)])
-        }
-        (WeaponKind::PlasmaMortar, 1) => {
-            Some(&[(ResourceKind::SpaceIron, 3), (ResourceKind::BioPlasma, 3)])
-        }
-        (WeaponKind::PlasmaMortar, 2) => {
-            Some(&[(ResourceKind::Titanium, 5), (ResourceKind::BioPlasma, 5)])
-        }
-        (WeaponKind::IonLance, 0) => {
-            Some(&[(ResourceKind::Titanium, 4), (ResourceKind::Helium3, 3)])
-        }
-        (WeaponKind::IonLance, 1) => {
-            Some(&[(ResourceKind::SpaceIron, 3), (ResourceKind::Helium3, 3)])
-        }
-        (WeaponKind::IonLance, 2) => {
-            Some(&[(ResourceKind::Titanium, 5), (ResourceKind::Helium3, 5)])
-        }
+        (WeaponKind::PulseRifle, 1) => Some(250),
+        (WeaponKind::PulseRifle, 2) => Some(550),
+        (WeaponKind::PlasmaMortar, 0) => Some(400),
+        (WeaponKind::PlasmaMortar, 1) => Some(700),
+        (WeaponKind::PlasmaMortar, 2) => Some(1200),
+        (WeaponKind::IonLance, 0) => Some(500),
+        (WeaponKind::IonLance, 1) => Some(850),
+        (WeaponKind::IonLance, 2) => Some(1500),
+        (WeaponKind::QuantumTesla, 0) => Some(600),
+        (WeaponKind::QuantumTesla, 1) => Some(1000),
+        (WeaponKind::QuantumTesla, 2) => Some(1800),
+        (WeaponKind::NukeMortar, 0) => Some(800),
+        (WeaponKind::NukeMortar, 1) => Some(1400),
+        (WeaponKind::NukeMortar, 2) => Some(2500),
         _ => None,
     }
 }
@@ -555,139 +634,159 @@ pub fn drive_enemy_spawns(
 ) {
     let count = enemies.iter().count();
     session.active_enemies = count;
-    if !matches!(
-        session.phase,
-        MissionPhase::HomePreparation
-            | MissionPhase::HomeDefense
-            | MissionPhase::AlienLanding
-            | MissionPhase::RelayHunt
-            | MissionPhase::Extraction
-            | MissionPhase::GateAssault
-    ) {
+    if session.route == PlanetRoute::Undecided || session.phase == MissionPhase::Finished {
         return;
     }
-    if session.wave > 0 && director.announced_wave != Some(session.wave) {
-        director.announced_wave = Some(session.wave);
-        waves.write(WaveStarted(session.wave));
-        sounds.write(GameSound::Warning);
+    let dt = time.delta_secs().min(0.10);
+    if !director.wave_active {
+        director.intermission = (director.intermission - dt).max(0.0);
+        session.phase_time_remaining = Some(director.intermission);
+        session.objective_hint = if session.wave == 0 {
+            "استعد: أول موجة تقترب من القاعدة".into()
+        } else {
+            format!(
+                "تم تطهير الموجة {} — طوّر أسلحتك بالنقاط قبل الهجوم التالي",
+                session.wave
+            )
+        };
+        if director.intermission <= 0.0 {
+            begin_wave(&mut director, &mut session, &mut waves, &mut sounds);
+        }
+        return;
     }
-    if session.phase == MissionPhase::GateAssault && !director.boss_spawned {
-        let point = player
-            .single()
-            .map(|p| p.translation + Vec3::new(0.0, 24.0, -45.0))
-            .unwrap_or(Vec3::Y * 35.0);
-        spawn_enemy(&mut commands, &assets, EnemyKind::CarrierBoss, point, 1.0);
-        director.boss_spawned = true;
-        sounds.write(GameSound::Warning);
-    }
+    session.phase_time_remaining = None;
     let Ok(player_transform) = player.single() else {
         return;
     };
-    if count == 0 && director.counter == 0 {
-        let roster = opening_roster(session.route);
-        let spawn_radius = if session.route == PlanetRoute::HomeDefense {
-            24.0
-        } else {
-            19.0
-        };
-        let difficulty = if session.route == PlanetRoute::HomeDefense {
-            0.52
-        } else {
-            1.0
-        };
-        for (index, kind) in roster.iter().copied().enumerate() {
-            let angle = index as f32 * std::f32::consts::TAU / roster.len() as f32 + 0.35;
-            let x = player_transform.translation.x + angle.cos() * spawn_radius;
-            let z = player_transform.translation.z + angle.sin() * spawn_radius;
-            let y = if kind.is_aerial() {
-                player_transform.translation.y + 14.0
-            } else {
-                ground_height(&loaded, &world, x, z) + 2.4
-            };
-            spawn_enemy(&mut commands, &assets, kind, Vec3::new(x, y, z), difficulty);
-        }
-        director.counter = roster.len() as u32;
-    }
-    let cap = if session.route == PlanetRoute::HomeDefense {
-        10
-    } else {
-        24
-    };
-    if count >= cap || !director.timer.tick(time.delta()).just_finished() {
+    if director.spawned >= director.quota && count == 0 {
+        let reward = wave_clear_reward(session.wave);
+        session.loadout.add_points(reward);
+        session.objective_hint = format!(
+            "الموجة {} انتهت — ربحت {} نقطة. الاستعداد للموجة التالية",
+            session.wave, reward
+        );
+        director.wave_active = false;
+        director.intermission = if director.boss_wave { 8.0 } else { 5.5 };
+        sounds.write(GameSound::Craft);
         return;
     }
-    director.counter = director.counter.wrapping_add(1);
-    let kind = choose_enemy(&session, director.counter);
-    let angle = director.counter as f32 * 2.399_963;
-    let radius = 18.0 + (director.counter % 5) as f32 * 3.5;
+    director.spawn_cooldown = (director.spawn_cooldown - dt).max(0.0);
+    if director.spawned >= director.quota
+        || count >= wave_enemy_cap(session.wave)
+        || director.spawn_cooldown > 0.0
+    {
+        return;
+    }
+    let is_boss = director.boss_wave && director.spawned + 1 == director.quota;
+    let kind = if is_boss {
+        EnemyKind::CarrierBoss
+    } else {
+        choose_wave_enemy(session.wave, director.counter)
+    };
+    let angle = director.counter as f32 * 2.399_963 + session.wave as f32 * 0.37;
+    let radius = 28.0 + (director.counter % 5) as f32 * 4.0;
     let x = player_transform.translation.x + angle.cos() * radius;
     let z = player_transform.translation.z + angle.sin() * radius;
     let y = if kind.is_aerial() {
-        player_transform.translation.y + 15.0
+        player_transform.translation.y + if is_boss { 26.0 } else { 15.0 }
     } else {
-        ground_height(&loaded, &world, x, z) + 2.4
+        ground_height(&loaded, &world, x, z) + 0.9
     };
-    let difficulty = if session.route == PlanetRoute::HomeDefense {
-        0.65
-    } else {
-        1.0 + session.relays_destroyed as f32 * 0.12
-    };
+    let difficulty = wave_difficulty(session.wave, session.route)
+        * if is_boss { 1.12 } else { 1.0 };
     spawn_enemy(&mut commands, &assets, kind, Vec3::new(x, y, z), difficulty);
-    let interval = match session.phase {
-        MissionPhase::HomePreparation => 4.5,
-        MissionPhase::HomeDefense => 6.2 - session.wave as f32 * 0.85,
-        MissionPhase::Extraction => 1.8,
-        MissionPhase::GateAssault => 2.5,
-        _ => 3.8 - session.relays_destroyed as f32 * 0.55,
-    }
-    .max(1.25);
-    director.timer = Timer::from_seconds(interval, TimerMode::Once);
+    director.spawned += 1;
+    director.counter = director.counter.wrapping_add(1);
+    director.spawn_cooldown = wave_spawn_interval(session.wave);
 }
 
-fn opening_roster(route: PlanetRoute) -> &'static [EnemyKind] {
-    const HOME_PATROL: [EnemyKind; 2] = [EnemyKind::Crawler, EnemyKind::Crawler];
-    const WAR_LANDING: [EnemyKind; 6] = [
-        EnemyKind::Crawler,
-        EnemyKind::Spitter,
-        EnemyKind::Drone,
-        EnemyKind::Crawler,
-        EnemyKind::Brute,
-        EnemyKind::Spitter,
-    ];
-    match route {
-        PlanetRoute::HomeDefense => &HOME_PATROL,
-        PlanetRoute::InvadedPlanet => &WAR_LANDING,
-        PlanetRoute::Undecided => &[],
-    }
-}
-
-fn choose_enemy(session: &GameSession, n: u32) -> EnemyKind {
-    if session.route == PlanetRoute::HomeDefense {
-        if session.wave >= 3 && n % 4 == 0 {
-            EnemyKind::Drone
-        } else if session.wave >= 2 && n % 3 == 0 {
-            EnemyKind::Spitter
-        } else {
-            EnemyKind::Crawler
-        }
-    } else if session.relays_destroyed == 0 {
-        if n % 4 == 0 {
-            EnemyKind::Spitter
-        } else {
-            EnemyKind::Crawler
-        }
-    } else if session.relays_destroyed == 1 {
-        if n % 3 == 0 {
-            EnemyKind::Drone
-        } else {
-            EnemyKind::Spitter
-        }
-    } else if n % 5 == 0 {
-        EnemyKind::Brute
-    } else if n % 2 == 0 {
-        EnemyKind::Drone
+fn begin_wave(
+    director: &mut EnemyDirector,
+    session: &mut GameSession,
+    waves: &mut MessageWriter<WaveStarted>,
+    sounds: &mut MessageWriter<GameSound>,
+) {
+    session.wave = session.wave.saturating_add(1);
+    director.spawned = 0;
+    director.quota = wave_spawn_total(session.wave);
+    director.wave_active = true;
+    director.boss_wave = wave_is_boss(session.wave);
+    director.spawn_cooldown = 0.15;
+    session.objective_hint = if director.boss_wave {
+        format!(
+            "موجة الزعيم {} — اخترق الدرع الأيوني ثم دمّر الحاملة",
+            session.wave
+        )
     } else {
-        EnemyKind::Crawler
+        format!(
+            "الموجة {} بدأت — أوقف {} من الغزاة",
+            session.wave, director.quota
+        )
+    };
+    waves.write(WaveStarted(session.wave));
+    sounds.write(GameSound::Warning);
+}
+
+fn wave_is_boss(wave: u32) -> bool {
+    wave > 0 && wave % 4 == 0
+}
+
+fn wave_spawn_total(wave: u32) -> u32 {
+    4 + wave * 2 + if wave_is_boss(wave) { 1 } else { 0 }
+}
+
+fn wave_enemy_cap(wave: u32) -> usize {
+    (5 + wave as usize * 2).clamp(7, 28)
+}
+
+fn wave_clear_reward(wave: u32) -> u32 {
+    90 + wave * 75
+}
+
+fn wave_spawn_interval(wave: u32) -> f32 {
+    (0.78 - wave as f32 * 0.028).max(0.16)
+}
+
+fn wave_difficulty(wave: u32, route: PlanetRoute) -> f32 {
+    let base = 1.0 + (wave.saturating_sub(1)) as f32 * 0.12;
+    let route_bonus = if route == PlanetRoute::InvadedPlanet { 0.10 } else { 0.0 };
+    // Every 8 waves apply an extra multiplier for exponential ramp-up
+    let tier_multiplier = 1.0 + (wave / 8) as f32 * 0.35;
+    (base + route_bonus) * tier_multiplier
+}
+
+fn choose_wave_enemy(wave: u32, n: u32) -> EnemyKind {
+    if wave <= 1 {
+        if n % 5 == 4 { EnemyKind::Spitter } else { EnemyKind::Crawler }
+    } else if wave <= 3 {
+        if n % 4 == 3 {
+            EnemyKind::Drone
+        } else if n % 3 == 2 {
+            EnemyKind::Spitter
+        } else {
+            EnemyKind::Crawler
+        }
+    } else if wave <= 6 {
+        if n % 5 == 4 {
+            EnemyKind::Brute
+        } else if n % 3 == 2 {
+            EnemyKind::Drone
+        } else if n % 2 == 0 {
+            EnemyKind::Spitter
+        } else {
+            EnemyKind::Crawler
+        }
+    } else {
+        // Higher waves: more Brutes and Drones
+        let roll = n % 6;
+        match roll {
+            0 => EnemyKind::Brute,
+            1 => EnemyKind::Drone,
+            2 => EnemyKind::Spitter,
+            3 => EnemyKind::Brute,
+            4 => EnemyKind::Drone,
+            _ => EnemyKind::Crawler,
+        }
     }
 }
 
@@ -698,12 +797,12 @@ fn spawn_enemy(
     position: Vec3,
     difficulty: f32,
 ) {
-    let (material, health, shield, speed, radius, attack) = match kind {
-        EnemyKind::Crawler => (0, 42.0, 0.0, 12.5, 3.0, 0.72),
-        EnemyKind::Spitter => (1, 62.0, 0.0, 7.2, 3.2, 1.55),
-        EnemyKind::Drone => (2, 54.0, 0.0, 10.5, 3.5, 1.35),
-        EnemyKind::Brute => (3, 190.0, 0.0, 4.6, 4.5, 1.10),
-        EnemyKind::CarrierBoss => (4, 760.0, 320.0, 6.5, 9.5, 0.85),
+    let (_material, health, shield, speed, radius, attack) = match kind {
+        EnemyKind::Crawler => (0, 42.0, 0.0, 12.5, 1.2, 0.72),
+        EnemyKind::Spitter => (1, 62.0, 0.0, 7.2, 1.3, 1.55),
+        EnemyKind::Drone => (2, 54.0, 0.0, 10.5, 1.4, 1.35),
+        EnemyKind::Brute => (3, 190.0, 0.0, 4.6, 1.8, 1.10),
+        EnemyKind::CarrierBoss => (4, 760.0, 320.0, 6.5, 4.5, 0.85),
     };
     let scene_index = match kind {
         EnemyKind::Crawler => 0,
@@ -719,8 +818,8 @@ fn spawn_enemy(
         EnemyKind::Brute => 3.6,
         EnemyKind::CarrierBoss => 6.0,
     };
-    let aura_scale = Vec3::new(radius * 0.82, 0.38, radius * 0.82);
-    let reticle_scale = Vec3::new(radius * 1.18, 0.52, radius * 1.18);
+    let model_y_offset = 0.0;
+    let scaled_health = health * difficulty;
     let scaled_shield = shield * difficulty;
     spawn_impact_fx(
         commands,
@@ -737,10 +836,13 @@ fn spawn_enemy(
         .spawn((
             Name::new(format!("Alien {kind:?}")),
             Transform::from_translation(position),
+            Visibility::default(),
             Enemy {
                 kind,
-                health: health * difficulty,
+                health: scaled_health,
+                max_health: scaled_health,
                 shield: scaled_shield,
+                max_shield: scaled_shield,
                 speed,
                 attack: Timer::from_seconds(attack, TimerMode::Repeating),
             },
@@ -755,27 +857,18 @@ fn spawn_enemy(
             parent.spawn((
                 Name::new("Open source alien model"),
                 SceneRoot(assets.enemy_scenes[scene_index].clone()),
-                Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::splat(scene_scale)),
+                Transform::from_xyz(0.0, model_y_offset, 0.0)
+                    .with_rotation(Quat::from_rotation_y(std::f32::consts::PI))
+                    .with_scale(Vec3::splat(scene_scale)),
             ));
             parent.spawn((
-                Name::new("Enemy presence aura"),
-                Mesh3d(assets.ring.clone()),
-                MeshMaterial3d(assets.materials[material].clone()),
-                Transform::from_xyz(0.0, -2.05, 0.0).with_scale(aura_scale),
-                EnemyAura {
-                    base_scale: aura_scale,
-                    phase: scene_index as f32 * 1.37,
-                },
-            ));
-            parent.spawn((
-                Name::new("Enemy target reticle"),
-                Mesh3d(assets.ring.clone()),
-                MeshMaterial3d(assets.fx_materials[0].clone()),
-                Transform::from_xyz(0.0, -1.92, 0.0).with_scale(reticle_scale),
+                Name::new("Target 3D Outline Shell"),
+                TargetOutlineModel,
+                SceneRoot(assets.enemy_scenes[scene_index].clone()),
+                Transform::from_xyz(0.0, model_y_offset, 0.0)
+                    .with_rotation(Quat::from_rotation_y(std::f32::consts::PI))
+                    .with_scale(Vec3::splat(scene_scale * 1.05)),
                 Visibility::Hidden,
-                EnemyAimReticle {
-                    base_scale: reticle_scale,
-                },
             ));
             if kind == EnemyKind::CarrierBoss {
                 let shield_scale = Vec3::splat(1.05);
@@ -783,7 +876,7 @@ fn spawn_enemy(
                     Name::new("Carrier ion shield"),
                     Mesh3d(assets.shield.clone()),
                     MeshMaterial3d(assets.fx_materials[2].clone()),
-                    Transform::from_xyz(0.0, 1.8, 0.0).with_scale(shield_scale),
+                    Transform::from_xyz(0.0, 0.5, 0.0).with_scale(shield_scale),
                     BossShieldVisual {
                         base_scale: shield_scale,
                         max_shield: scaled_shield.max(1.0),
@@ -792,44 +885,123 @@ fn spawn_enemy(
             }
         });
 }
+
+pub fn apply_outline_materials(
+    assets: Option<Res<CombatAssets>>,
+    outlines: Query<&Children, With<TargetOutlineModel>>,
+    children: Query<&Children>,
+    mut materials: Query<&mut MeshMaterial3d<StandardMaterial>>,
+) {
+    let Some(assets) = assets else { return };
+    for root_children in &outlines {
+        fn set_white_recursive(
+            entity: Entity,
+            children: &Query<&Children>,
+            materials: &mut Query<&mut MeshMaterial3d<StandardMaterial>>,
+            white_mat: &Handle<StandardMaterial>,
+        ) {
+            if let Ok(mut mat) = materials.get_mut(entity) {
+                if mat.0 != *white_mat {
+                    mat.0 = white_mat.clone();
+                }
+            }
+            if let Ok(child_list) = children.get(entity) {
+                for &child in child_list {
+                    set_white_recursive(child, children, materials, white_mat);
+                }
+            }
+        }
+        for &child in root_children {
+            set_white_recursive(child, &children, &mut materials, &assets.white_outline_material);
+        }
+    }
+}
+
 pub fn update_enemy_visuals(
     time: Res<Time>,
     aim: Res<AimSolution>,
-    enemies: Query<&Enemy>,
-    mut auras: Query<
-        (&EnemyAura, &mut Transform),
-        (Without<EnemyAimReticle>, Without<BossShieldVisual>),
+    session: Option<Res<GameSession>>,
+    enemies: Query<
+        (Entity, &Enemy, &CombatTarget, &Transform),
+        (Without<BossShieldVisual>, Without<TargetOutlineModel>),
     >,
-    mut reticles: Query<
-        (&ChildOf, &EnemyAimReticle, &mut Transform, &mut Visibility),
-        (Without<EnemyAura>, Without<BossShieldVisual>),
+    mut gizmos: Gizmos,
+    mut outlines: Query<
+        (&ChildOf, &mut Visibility),
+        (With<TargetOutlineModel>, Without<BossShieldVisual>),
     >,
     mut shields: Query<
         (&ChildOf, &BossShieldVisual, &mut Transform, &mut Visibility),
-        (Without<EnemyAura>, Without<EnemyAimReticle>),
+        (Without<Enemy>, Without<TargetOutlineModel>),
     >,
 ) {
     let elapsed = time.elapsed_secs();
-    for (aura, mut transform) in &mut auras {
-        let pulse = 1.0 + (elapsed * 3.4 + aura.phase).sin() * 0.10;
-        transform.scale = aura.base_scale * pulse;
-        transform.rotate_y(time.delta_secs() * 0.72);
-    }
-    for (parent, reticle, mut transform, mut visibility) in &mut reticles {
-        let selected = aim.enemy == Some(parent.parent());
-        *visibility = if selected {
+    for (parent, mut visibility) in &mut outlines {
+        let is_target = aim.enemy == Some(parent.parent());
+        *visibility = if is_target {
             Visibility::Visible
         } else {
             Visibility::Hidden
         };
-        if selected {
-            let pulse = 1.0 + (elapsed * 7.5).sin() * 0.08;
-            transform.scale = reticle.base_scale * pulse;
-            transform.rotate_y(-time.delta_secs() * 1.8);
+    }
+    for (entity, enemy, target, transform) in &enemies {
+        let is_targeted = aim.enemy == Some(entity);
+        let pulse = if is_targeted {
+            1.0 + (elapsed * 6.0).sin() * 0.05
+        } else {
+            1.0
+        };
+        let iso = Isometry3d::new(
+            transform.translation + Vec3::Y * 0.1,
+            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        );
+        if is_targeted {
+            gizmos.circle(iso, target.radius * pulse, Color::srgb(1.0, 0.25, 0.25));
+            gizmos.circle(iso, target.radius * 0.5 * pulse, Color::WHITE);
+        }
+
+        // Overhead 3D Health Bar (only for targeted, damaged, or boss)
+        let hp_ratio = (enemy.health / enemy.max_health).clamp(0.0, 1.0);
+        if is_targeted || enemy.kind == EnemyKind::CarrierBoss || hp_ratio < 0.99 {
+            let head_y = match enemy.kind {
+                EnemyKind::Crawler => 1.3,
+                EnemyKind::Spitter => 1.5,
+                EnemyKind::Drone => 1.8,
+                EnemyKind::Brute => 2.5,
+                EnemyKind::CarrierBoss => 4.2,
+            };
+            let bar_center = transform.translation + Vec3::Y * head_y;
+            let bar_half_width = match enemy.kind {
+                EnemyKind::CarrierBoss => 2.5,
+                EnemyKind::Brute => 1.4,
+                _ => 0.9,
+            };
+            let start_pos = bar_center - Vec3::X * bar_half_width;
+            let hp_pos = start_pos + Vec3::X * (bar_half_width * 2.0 * hp_ratio);
+            let end_pos = start_pos + Vec3::X * (bar_half_width * 2.0);
+
+            if hp_ratio > 0.0 {
+                gizmos.line(start_pos, hp_pos, Color::srgb(0.2, 0.9, 0.3));
+            }
+            if hp_ratio < 1.0 {
+                gizmos.line(hp_pos, end_pos, Color::srgb(0.85, 0.15, 0.15));
+            }
+        }
+    }
+    if let Some(aim_pt) = aim.aim_point {
+        let iso = Isometry3d::new(
+            aim_pt + Vec3::Y * 0.15,
+            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        );
+        gizmos.circle(iso, 0.45, Color::srgb(1.0, 0.9, 0.2));
+        if let Some(session) = &session {
+            if session.loadout.selected_tool == ToolSlot::Weapon(WeaponKind::PlasmaMortar) {
+                gizmos.circle(iso, 7.5, Color::srgba(1.0, 0.45, 0.1, 0.65));
+            }
         }
     }
     for (parent, shield, mut transform, mut visibility) in &mut shields {
-        let Ok(enemy) = enemies.get(parent.parent()) else {
+        let Ok((_, enemy, _, _)) = enemies.get(parent.parent()) else {
             *visibility = Visibility::Hidden;
             continue;
         };
@@ -850,7 +1022,7 @@ pub fn update_enemy_ai(
     world: Res<VoxelViewerWorld>,
     loaded: Res<LoadedVoxelChunks>,
     assets: Res<CombatAssets>,
-    session: Res<GameSession>,
+    _edits: Res<VoxelWorldEdits>,
     player: Query<&Transform, (With<PlayerTag>, Without<Enemy>)>,
     objectives: Query<(Entity, &Transform, &MissionTarget), Without<Enemy>>,
     mut enemies: Query<(&mut Transform, &mut Enemy, &mut CombatTarget), Without<PlayerTag>>,
@@ -862,17 +1034,9 @@ pub fn update_enemy_ai(
     };
     let dt = time.delta_secs().min(0.05);
     for (mut transform, mut enemy, mut target_data) in &mut enemies {
-        let objective = if session.route == PlanetRoute::HomeDefense {
-            objectives
-                .iter()
-                .find(|(_, _, t)| t.kind == MissionTargetKind::HomeCore)
-        } else if session.phase == MissionPhase::Extraction {
-            objectives
-                .iter()
-                .find(|(_, _, t)| t.kind == MissionTargetKind::Ship)
-        } else {
-            None
-        };
+        let objective = objectives
+            .iter()
+            .find(|(_, _, target)| target.kind == MissionTargetKind::HomeCore);
         let (target, damage_target) = objective
             .map(|(e, t, _)| (t.translation, DamageTarget::Base(e)))
             .unwrap_or((player.translation, DamageTarget::Player));
@@ -885,8 +1049,10 @@ pub fn update_enemy_ai(
         let forward = flat.normalize_or_zero();
         let side = Vec3::new(-forward.z, 0.0, forward.x);
         if target_data.aerial {
+            // Boss that has lost its shield descends to the ground
             let height = if enemy.kind == EnemyKind::CarrierBoss && enemy.shield <= 0.0 {
-                target.y + 5.0
+                let ground = ground_height(&loaded, &world, transform.translation.x, transform.translation.z);
+                ground + 5.5  // land on the ground
             } else {
                 target.y + 15.0
             };
@@ -901,69 +1067,93 @@ pub fn update_enemy_ai(
             let desired =
                 forward * enemy.speed + orbit + Vec3::Y * (height - transform.translation.y) * 1.4;
             transform.translation += desired.clamp_length_max(enemy.speed * 1.65) * dt;
-        } else {
-            let desired_direction = match enemy.kind {
-                EnemyKind::Spitter if distance < 15.0 => -forward,
-                EnemyKind::Spitter if distance <= 27.0 => {
-                    side * (time.elapsed_secs() * 1.8 + transform.translation.z * 0.04).sin()
+
+            // Once boss is near the ground after shield loss, set it fully grounded
+            if enemy.kind == EnemyKind::CarrierBoss && enemy.shield <= 0.0 {
+                let ground = ground_height(&loaded, &world, transform.translation.x, transform.translation.z);
+                if transform.translation.y <= ground + 7.0 {
+                    target_data.aerial = false;
+                    transform.translation.y = ground + 5.5;
                 }
+            }
+        } else {
+            let move_dir = match enemy.kind {
+                EnemyKind::Spitter if distance < 14.0 => -forward,
+                EnemyKind::Spitter if distance <= 26.0 => {
+                    side * (time.elapsed_secs() * 2.2 + transform.translation.z * 0.05).sin()
+                }
+                EnemyKind::Crawler if distance <= 9.0 => forward * 2.4, // Fast lunging leap!
+                EnemyKind::Crawler => {
+                    let flank = side * (time.elapsed_secs() * 3.2 + transform.translation.x * 0.06).sin() * 0.42;
+                    (forward + flank).normalize_or_zero()
+                }
+                EnemyKind::Brute if distance <= 16.0 => forward * 2.2, // Heavy Enraged Charge!
+                EnemyKind::CarrierBoss if distance > 8.0 => forward * 1.35,
                 _ if distance > melee_range(enemy.kind) => forward,
                 _ => Vec3::ZERO,
             };
-            if desired_direction != Vec3::ZERO {
-                let candidate = transform.translation
-                    + desired_direction.normalize_or_zero() * enemy.speed * dt;
+            if move_dir != Vec3::ZERO {
+                let current_speed = if enemy.kind == EnemyKind::Crawler && distance <= 9.0 {
+                    enemy.speed * 2.4
+                } else if enemy.kind == EnemyKind::Brute && distance <= 16.0 {
+                    enemy.speed * 2.2
+                } else {
+                    enemy.speed
+                };
+                let candidate = transform.translation + move_dir.normalize_or_zero() * current_speed * dt;
                 let ground = ground_height(&loaded, &world, candidate.x, candidate.z);
-                let step = ground + 2.2 - transform.translation.y;
-                if (-2.6..=4.0).contains(&step) {
-                    transform.translation = Vec3::new(candidate.x, ground + 2.2, candidate.z);
-                }
+                let target_y = ground + if enemy.kind == EnemyKind::CarrierBoss { 5.5 } else { 0.9 };
+                let y_blend = 1.0 - (-14.0 * dt).exp();
+                let new_y = transform.translation.y + (target_y - transform.translation.y) * y_blend;
+                transform.translation = Vec3::new(candidate.x, new_y, candidate.z);
             }
         }
-        if flat.length_squared() > 0.2 {
-            let rotation = Quat::from_rotation_y((-flat.x).atan2(-flat.z));
-            transform.rotation = transform.rotation.slerp(rotation, 1.0 - (-8.0 * dt).exp());
+        if flat.length_squared() > 0.05 {
+            let target_rotation = Quat::from_rotation_y(flat.x.atan2(flat.z));
+            transform.rotation = transform.rotation.slerp(target_rotation, 1.0 - (-12.0 * dt).exp());
         }
         enemy.attack.tick(time.delta());
         if !enemy.attack.just_finished() {
             continue;
         }
         match enemy.kind {
-            EnemyKind::Crawler if distance <= 5.0 => {
+            EnemyKind::Crawler if distance <= 5.5 => {
                 damage.write(DamageEvent {
                     target: damage_target,
-                    amount: 8.0,
+                    amount: 14.0,
                     kind: DamageKind::Enemy,
                 });
             }
-            EnemyKind::Brute if distance <= 7.0 => {
+            EnemyKind::Brute if distance <= 7.5 => {
                 damage.write(DamageEvent {
                     target: damage_target,
-                    amount: 20.0,
+                    amount: 28.0,
                     kind: DamageKind::Enemy,
                 });
             }
-            EnemyKind::Spitter | EnemyKind::Drone | EnemyKind::CarrierBoss if distance <= 62.0 => {
-                let velocity =
-                    (target + Vec3::Y - transform.translation).normalize_or_zero() * 24.0;
+            EnemyKind::Spitter | EnemyKind::Drone | EnemyKind::CarrierBoss if distance <= 65.0 => {
+                let lead_target = target + Vec3::Y * 0.8;
+                let velocity = (lead_target - transform.translation).normalize_or_zero() * 26.0;
                 spawn_shot(
                     &mut commands,
                     &assets,
-                    transform.translation,
+                    transform.translation + Vec3::Y * 1.2,
                     velocity,
-                    8,
+                    3,
                     Projectile {
                         from_player: false,
                         velocity,
                         gravity: 0.0,
                         damage: if enemy.kind == EnemyKind::CarrierBoss {
-                            16.0
+                            18.0
+                        } else if enemy.kind == EnemyKind::Spitter {
+                            12.0
                         } else {
-                            9.0
+                            10.0
                         },
                         kind: DamageKind::Enemy,
-                        life: Timer::from_seconds(3.2, TimerMode::Once),
-                        radius: 1.2,
+                        life: Timer::from_seconds(3.5, TimerMode::Once),
+                        radius: 1.3,
                         target: None,
                         area: 0.0,
                     },
@@ -988,7 +1178,8 @@ pub fn update_projectiles(
     >,
     targets: Query<(Entity, &GlobalTransform, &CombatTarget)>,
     player: Query<&Transform, (With<PlayerTag>, Without<Projectile>)>,
-    loaded: Res<LoadedVoxelChunks>,
+    mut loaded: ResMut<LoadedVoxelChunks>,
+    mut edits: ResMut<VoxelWorldEdits>,
     mut damage: MessageWriter<DamageEvent>,
     mut commands: Commands,
 ) {
@@ -997,6 +1188,12 @@ pub fn update_projectiles(
         if shot.life.just_finished() {
             if shot.from_player && shot.area > 0.0 {
                 area_damage(transform.translation, &shot, &targets, &mut damage);
+                let block_pos = world_to_block(transform.translation);
+                edits.edits.push(VoxelTerrainEdit::DigSphere {
+                    center: block_pos,
+                    radius: 2,
+                });
+                invalidate_edit(&mut commands, &mut loaded, block_pos, 2);
             }
             spawn_impact_fx(
                 &mut commands,
@@ -1016,7 +1213,23 @@ pub fn update_projectiles(
                 * shot.velocity.length();
             shot.velocity = shot
                 .velocity
-                .lerp(desired, 1.0 - (-7.0 * time.delta_secs()).exp());
+                .lerp(desired, 1.0 - (-8.5 * time.delta_secs()).exp());
+        } else if shot.from_player {
+            let speed = shot.velocity.length();
+            if speed > 1.0 {
+                if let Some((_, near_transform, _)) = targets.iter().find(|(_, t_trans, t_data)| {
+                    t_data.targetable
+                        && projectile_accepts_target(shot.kind, t_data.aerial)
+                        && t_trans.translation().distance(transform.translation) <= 7.5
+                }) {
+                    let desired = (near_transform.translation() - transform.translation)
+                        .normalize_or_zero()
+                        * speed;
+                    shot.velocity = shot
+                        .velocity
+                        .lerp(desired, 1.0 - (-6.5 * time.delta_secs()).exp());
+                }
+            }
         }
         let start = transform.translation;
         let dt = time.delta_secs();
@@ -1038,7 +1251,7 @@ pub fn update_projectiles(
                         start,
                         end,
                         target_transform.translation(),
-                        target.radius + shot.radius,
+                        target.radius + shot.radius + 1.85,
                     )
                     .map(|fraction| {
                         (
@@ -1070,6 +1283,26 @@ pub fn update_projectiles(
                     kind: shot.kind,
                 });
             }
+
+            let is_terrain = matches!(impact, ProjectileImpact::Terrain);
+            let is_explosion = shot.area > 0.0;
+            if is_terrain || is_explosion {
+                let crater_radius: u16 = match shot.kind {
+                    DamageKind::Plasma => 2,
+                    DamageKind::Ion => 1,
+                    DamageKind::Pulse => 1,
+                    DamageKind::Enemy => 1,
+                    DamageKind::Tesla => 1,
+                    DamageKind::Nuke => 4,
+                };
+                let block_pos = world_to_block(impact_position);
+                edits.edits.push(VoxelTerrainEdit::DigSphere {
+                    center: block_pos,
+                    radius: crater_radius,
+                });
+                invalidate_edit(&mut commands, &mut loaded, block_pos, crater_radius as i32);
+            }
+
             spawn_impact_fx(
                 &mut commands,
                 &assets,
@@ -1198,16 +1431,15 @@ pub struct DamageWriters<'w> {
 
 pub fn process_damage(
     time: Res<Time>,
-    balance: Res<BalanceConfig>,
+    _balance: Res<BalanceConfig>,
     assets: Res<CombatAssets>,
     mut runtime: ResMut<CombatRuntime>,
     mut session: ResMut<GameSession>,
-    mut player: Query<&mut Transform, With<PlayerTag>>,
+    _player: Query<&Transform, (With<PlayerTag>, Without<Enemy>, Without<MissionTarget>)>,
     mut enemies: Query<(&mut Enemy, &mut CombatTarget, &Transform), Without<PlayerTag>>,
-    mut objectives: Query<
-        (&mut MissionTarget, &Transform),
-        (Without<Enemy>, Without<PlayerTag>),
-    >,
+    mut objectives: Query<(&mut MissionTarget, &Transform), (Without<Enemy>, Without<PlayerTag>)>,
+    mut loaded: ResMut<LoadedVoxelChunks>,
+    mut edits: ResMut<VoxelWorldEdits>,
     mut events: MessageReader<DamageEvent>,
     mut writers: DamageWriters,
     mut next_state: ResMut<NextState<AppState>>,
@@ -1224,24 +1456,12 @@ pub fn process_damage(
                     (session.loadout.health - event.amount + absorbed).max(0.0);
                 writers.sounds.write(GameSound::PlayerHit);
                 if session.loadout.health <= 0.0 {
-                    if session.phase == MissionPhase::GateAssault {
-                        finish_run(
-                            &mut session,
-                            RunOutcome::MissionFailed,
-                            &mut writers.finished,
-                            &mut next_state,
-                        );
-                    } else {
-                        session
-                            .loadout
-                            .lose_raw_resources(balance.respawn_resource_loss);
-                        session.loadout.health = 100.0;
-                        session.loadout.shield = 50.0;
-                        if let Ok(mut player) = player.single_mut() {
-                            player.translation = session.safe_position + Vec3::Y;
-                        }
-                        writers.respawned.write(PlayerRespawned);
-                    }
+                    finish_run(
+                        &mut session,
+                        RunOutcome::MissionFailed,
+                        &mut writers.finished,
+                        &mut next_state,
+                    );
                 }
             }
             DamageTarget::Enemy(entity) => {
@@ -1285,8 +1505,25 @@ pub fn process_damage(
                                 2.1
                             },
                         );
+
+                        let crater_radius: u16 = if kind == EnemyKind::CarrierBoss {
+                            4
+                        } else if kind == EnemyKind::Brute {
+                            2
+                        } else {
+                            1
+                        };
+                        let block_pos = world_to_block(death_position);
+                        edits.edits.push(VoxelTerrainEdit::DigSphere {
+                            center: block_pos,
+                            radius: crater_radius,
+                        });
+                        invalidate_edit(&mut commands, &mut loaded, block_pos, crater_radius as i32);
                         commands.entity(entity).despawn();
                         session.loadout.kills += 1;
+                        let points_earned = kind.point_value();
+                        session.loadout.add_points(points_earned);
+                        session.check_level_up();
                         writers.kills.write(EnemyKilled(kind));
                         let drop = match kind {
                             EnemyKind::Crawler | EnemyKind::Spitter => ResourceKind::SpaceIron,
@@ -1298,12 +1535,7 @@ pub fn process_damage(
                         writers.resources.write(ResourceCollected(drop, 1));
                         writers.sounds.write(GameSound::EnemyDeath);
                         if kind == EnemyKind::CarrierBoss {
-                            finish_run(
-                                &mut session,
-                                RunOutcome::GateDestroyed,
-                                &mut writers.finished,
-                                &mut next_state,
-                            );
+                            session.objective_hint = "انهار الزعيم — صفِّ بقية الموجة لتحصل على مكافأة التطهير".into();
                         }
                     } else {
                         writers.sounds.write(GameSound::EnemyHit);
@@ -1502,10 +1734,12 @@ fn spawn_shot(
 
 fn projectile_visual_profile(kind: DamageKind) -> (f32, f32, f32, f32, f32) {
     match kind {
-        DamageKind::Pulse => (0.60, 1.15, 2.8, 3_600.0, 9.0),
-        DamageKind::Plasma => (1.48, 1.85, 5.6, 16_000.0, 18.0),
-        DamageKind::Ion => (0.94, 1.42, 6.8, 9_200.0, 15.0),
-        DamageKind::Enemy => (0.76, 1.18, 3.8, 4_600.0, 11.0),
+        DamageKind::Pulse => (0.65, 1.20, 3.0, 14_000.0, 11.0),
+        DamageKind::Plasma => (1.50, 1.95, 5.8, 28_000.0, 17.0),
+        DamageKind::Ion => (0.95, 1.48, 6.8, 18_000.0, 14.0),
+        DamageKind::Tesla => (0.85, 1.35, 5.0, 16_000.0, 12.0),
+        DamageKind::Nuke => (2.20, 2.80, 9.5, 40_000.0, 24.0),
+        DamageKind::Enemy => (0.78, 1.20, 3.8, 10_000.0, 9.0),
     }
 }
 
@@ -1570,6 +1804,8 @@ pub fn sync_player_weapon_visual(
         WeaponKind::PulseRifle => 0,
         WeaponKind::PlasmaMortar => 1,
         WeaponKind::IonLance => 2,
+        WeaponKind::QuantumTesla => 0,
+        WeaponKind::NukeMortar => 1,
     };
     let (rest, muzzle_distance) = weapon_mount(weapon);
     commands.entity(right_arm).with_children(|arm| {
@@ -1634,6 +1870,22 @@ fn weapon_mount(weapon: WeaponKind) -> (Transform, f32) {
             },
             0.38,
         ),
+        WeaponKind::QuantumTesla => (
+            Transform {
+                translation: Vec3::new(-0.15, -0.68, 0.15),
+                rotation: Quat::from_euler(EulerRot::YXZ, std::f32::consts::PI, -0.08, 0.0),
+                scale: Vec3::splat(1.20),
+            },
+            0.40,
+        ),
+        WeaponKind::NukeMortar => (
+            Transform {
+                translation: Vec3::new(-0.15, -0.75, 0.15),
+                rotation: Quat::from_euler(EulerRot::YXZ, std::f32::consts::PI, -0.06, 0.0),
+                scale: Vec3::splat(1.40),
+            },
+            0.32,
+        ),
     }
 }
 
@@ -1665,6 +1917,7 @@ pub fn update_combat_effects(
             &mut Transform,
             &mut CombatFx,
             Option<&mut FxMotion>,
+            Option<&FxSpin>,
             Option<&mut PointLight>,
         ),
         (
@@ -1689,7 +1942,7 @@ pub fn update_combat_effects(
     mut commands: Commands,
 ) {
     let dt = time.delta_secs().min(0.05);
-    for (entity, mut transform, mut effect, motion, light) in &mut effects {
+    for (entity, mut transform, mut effect, motion, spin, light) in &mut effects {
         effect.age += dt;
         let progress = (effect.age / effect.duration.max(0.001)).clamp(0.0, 1.0);
         if progress >= 1.0 {
@@ -1710,6 +1963,9 @@ pub fn update_combat_effects(
         }
         if let Some(mut light) = light {
             light.intensity = effect.peak_light * (1.0 - progress).powi(2);
+        }
+        if let Some(spin) = spin {
+            transform.rotate(Quat::from_axis_angle(spin.axis, spin.radians_per_second * dt));
         }
     }
     let elapsed = time.elapsed_secs();
@@ -1741,6 +1997,8 @@ fn fx_style(kind: DamageKind) -> usize {
         DamageKind::Pulse => 0,
         DamageKind::Plasma => 1,
         DamageKind::Ion => 2,
+        DamageKind::Tesla => 0,
+        DamageKind::Nuke => 1,
         DamageKind::Enemy => 3,
     }
 }
@@ -1762,75 +2020,136 @@ fn spawn_muzzle_fx(
     style: usize,
     power: f32,
 ) {
+    let style = style % assets.fx_core_materials.len();
     let direction = direction.normalize_or_zero();
-    let start_scale = Vec3::splat(0.24 * power);
+    if direction == Vec3::ZERO {
+        return;
+    }
+    let ignition_scale = Vec3::splat(0.12 * power);
     commands.spawn((
-        Name::new("Muzzle flash"),
+        Name::new("Muzzle ignition core"),
         Mesh3d(assets.flash.clone()),
         MeshMaterial3d(assets.fx_core_materials[style].clone()),
-        Transform::from_translation(origin).with_scale(start_scale),
+        Transform::from_translation(origin).with_scale(ignition_scale),
         PointLight {
             color: fx_color(style),
             intensity: 18_000.0 * power,
-            range: 16.0 * power,
+            range: 12.0 * power,
             radius: 0.25,
             shadows_enabled: false,
             ..default()
         },
         CombatFx {
             age: 0.0,
-            duration: 0.095,
-            start_scale,
-            end_scale: Vec3::splat(1.42 * power),
+            duration: 0.075,
+            start_scale: ignition_scale,
+            end_scale: Vec3::splat(1.65 * power),
             peak_light: 18_000.0 * power,
         },
         RunEntity,
     ));
-    let bloom_scale = Vec3::splat(0.44 * power);
+    let ring_scale = Vec3::splat(0.18 * power);
     commands.spawn((
-        Name::new("Muzzle energy bloom"),
-        Mesh3d(assets.flash.clone()),
-        MeshMaterial3d(assets.fx_materials[style].clone()),
-        Transform::from_translation(origin).with_scale(bloom_scale),
+        Name::new("Muzzle shock iris"),
+        Mesh3d(assets.ring.clone()),
+        MeshMaterial3d(assets.fx_core_materials[style].clone()),
+        Transform {
+            translation: origin + direction * 0.08,
+            rotation: Quat::from_rotation_arc(Vec3::Y, direction),
+            scale: ring_scale,
+        },
         CombatFx {
             age: 0.0,
-            duration: 0.12,
-            start_scale: bloom_scale,
-            end_scale: Vec3::splat(1.9 * power),
+            duration: 0.16,
+            start_scale: ring_scale,
+            end_scale: Vec3::splat(2.65 * power),
+            peak_light: 0.0,
+        },
+        FxSpin {
+            axis: direction,
+            radians_per_second: 18.0,
+        },
+        RunEntity,
+    ));
+    let rail_length = 3.2 * power;
+    let mut rail_transform = Transform::from_translation(origin + direction * rail_length * 0.46);
+    rail_transform.look_at(origin + direction * rail_length, Vec3::Y);
+    let rail_scale = Vec3::new(0.32 * power, 0.32 * power, rail_length);
+    rail_transform.scale = rail_scale;
+    commands.spawn((
+        Name::new("Muzzle accelerator channel"),
+        Mesh3d(assets.beam.clone()),
+        MeshMaterial3d(assets.fx_materials[style].clone()),
+        rail_transform,
+        CombatFx {
+            age: 0.0,
+            duration: 0.085,
+            start_scale: rail_scale,
+            end_scale: Vec3::new(0.03, 0.03, rail_length * 0.68),
             peak_light: 0.0,
         },
         RunEntity,
     ));
-    if direction != Vec3::ZERO {
-        let ring_scale = Vec3::splat(0.30 * power);
+    let mut core_transform = Transform::from_translation(origin + direction * rail_length * 0.48);
+    core_transform.look_at(origin + direction * rail_length, Vec3::Y);
+    let core_scale = Vec3::new(0.075 * power, 0.075 * power, rail_length * 0.92);
+    core_transform.scale = core_scale;
+    commands.spawn((
+        Name::new("Muzzle accelerator core"),
+        Mesh3d(assets.beam.clone()),
+        MeshMaterial3d(assets.fx_core_materials[style].clone()),
+        core_transform,
+        CombatFx {
+            age: 0.0,
+            duration: 0.055,
+            start_scale: core_scale,
+            end_scale: Vec3::new(0.01, 0.01, rail_length * 0.72),
+            peak_light: 0.0,
+        },
+        RunEntity,
+    ));
+    let reference = if direction.y.abs() > 0.85 { Vec3::Z } else { Vec3::Y };
+    let right = direction.cross(reference).normalize_or_zero();
+    let up = right.cross(direction).normalize_or_zero();
+    for index in 0..3 {
+        let angle = index as f32 * std::f32::consts::TAU / 3.0;
+        let offset = (right * angle.cos() + up * angle.sin()) * (0.24 * power);
+        let start = origin - direction * 0.18 + offset;
+        let end = origin + direction * (1.65 * power) + offset * 0.20;
+        let delta = end - start;
+        let distance = delta.length();
+        let mut arc_transform = Transform::from_translation(start + delta * 0.5);
+        arc_transform.look_at(end, up);
+        let arc_scale = Vec3::new(0.055 * power, 0.055 * power, distance);
+        arc_transform.scale = arc_scale;
         commands.spawn((
-            Name::new("Muzzle containment ring"),
-            Mesh3d(assets.ring.clone()),
+            Name::new("Muzzle discharge blade"),
+            Mesh3d(assets.beam.clone()),
             MeshMaterial3d(assets.fx_core_materials[style].clone()),
-            Transform {
-                translation: origin + direction * 0.08,
-                rotation: Quat::from_rotation_arc(Vec3::Y, direction),
-                scale: ring_scale,
-            },
+            arc_transform,
             CombatFx {
                 age: 0.0,
-                duration: 0.14,
-                start_scale: ring_scale,
-                end_scale: Vec3::splat(1.75 * power),
+                duration: 0.11 + index as f32 * 0.02,
+                start_scale: arc_scale,
+                end_scale: Vec3::new(0.01, 0.01, distance * 0.36),
                 peak_light: 0.0,
+            },
+            FxSpin {
+                axis: direction,
+                radians_per_second: 12.0 + index as f32 * 4.0,
             },
             RunEntity,
         ));
-        spawn_tracer_fx(
-            commands,
-            assets,
-            origin,
-            origin + direction * (1.7 * power),
-            style,
-            1.8 * power,
-            0.065,
-        );
     }
+    spawn_tracer_fx(
+        commands,
+        assets,
+        origin,
+        origin + direction * (3.6 * power),
+        style,
+        0.92 * power,
+        0.045,
+    );
 }
 
 fn spawn_tracer_fx(
@@ -1842,6 +2161,7 @@ fn spawn_tracer_fx(
     thickness: f32,
     duration: f32,
 ) {
+    let style = style % assets.fx_materials.len();
     let delta = end - start;
     let distance = delta.length();
     if distance <= 0.01 {
@@ -1892,7 +2212,12 @@ fn spawn_impact_fx(
     style: usize,
     power: f32,
 ) {
-    let core_scale = Vec3::splat(0.18 * power);
+    let style = style % assets.fx_materials.len();
+    let light_intensity = 32_000.0 * power;
+    let light_range = 15.0 * power;
+    let core_scale = Vec3::splat(0.25 * power);
+    let end_core = Vec3::splat(2.2 * power);
+
     commands.spawn((
         Name::new("Energy impact core"),
         Mesh3d(assets.flash.clone()),
@@ -1900,22 +2225,26 @@ fn spawn_impact_fx(
         Transform::from_translation(position).with_scale(core_scale),
         PointLight {
             color: fx_color(style),
-            intensity: 22_000.0 * power,
-            range: 18.0 * power,
-            radius: 0.35,
-            shadows_enabled: false,
+            intensity: light_intensity,
+            range: light_range,
+            radius: 0.35 * power,
+            shadows_enabled: true,
+            shadow_depth_bias: 0.05,
+            shadow_normal_bias: 0.6,
             ..default()
         },
         CombatFx {
             age: 0.0,
-            duration: 0.18 + power * 0.035,
+            duration: 0.22 + power * 0.04,
             start_scale: core_scale,
-            end_scale: Vec3::splat(1.65 * power),
-            peak_light: 22_000.0 * power,
+            end_scale: end_core,
+            peak_light: light_intensity,
         },
         RunEntity,
     ));
-    let bloom_scale = Vec3::splat(0.42 * power);
+
+    let bloom_scale = Vec3::splat(0.55 * power);
+    let end_bloom = Vec3::splat(4.6 * power);
     commands.spawn((
         Name::new("Energy impact bloom"),
         Mesh3d(assets.flash.clone()),
@@ -1923,14 +2252,16 @@ fn spawn_impact_fx(
         Transform::from_translation(position).with_scale(bloom_scale),
         CombatFx {
             age: 0.0,
-            duration: 0.30 + power * 0.045,
+            duration: 0.35 + power * 0.05,
             start_scale: bloom_scale,
-            end_scale: Vec3::splat(3.4 * power),
+            end_scale: end_bloom,
             peak_light: 0.0,
         },
         RunEntity,
     ));
-    let ring_scale = Vec3::splat(0.22 * power);
+
+    let ring_scale = Vec3::splat(0.30 * power);
+    let end_ring = Vec3::splat(4.2 * power);
     commands.spawn((
         Name::new("Energy impact ring"),
         Mesh3d(assets.ring.clone()),
@@ -1938,14 +2269,16 @@ fn spawn_impact_fx(
         Transform::from_translation(position + Vec3::Y * 0.08).with_scale(ring_scale),
         CombatFx {
             age: 0.0,
-            duration: 0.24 + power * 0.045,
+            duration: 0.28 + power * 0.05,
             start_scale: ring_scale,
-            end_scale: Vec3::splat(2.8 * power),
+            end_scale: end_ring,
             peak_light: 0.0,
         },
         RunEntity,
     ));
-    let hot_ring_scale = Vec3::splat(0.13 * power);
+
+    let hot_ring_scale = Vec3::splat(0.18 * power);
+    let end_hot_ring = Vec3::splat(2.8 * power);
     commands.spawn((
         Name::new("Energy impact hot ring"),
         Mesh3d(assets.ring.clone()),
@@ -1953,19 +2286,20 @@ fn spawn_impact_fx(
         Transform::from_translation(position + Vec3::Y * 0.12).with_scale(hot_ring_scale),
         CombatFx {
             age: 0.0,
-            duration: 0.17 + power * 0.03,
+            duration: 0.20 + power * 0.035,
             start_scale: hot_ring_scale,
-            end_scale: Vec3::splat(1.9 * power),
+            end_scale: end_hot_ring,
             peak_light: 0.0,
         },
         RunEntity,
     ));
-    let spark_count = if power > 1.2 { 10 } else { 6 };
+
+    let spark_count = if power > 2.0 { 16 } else if power > 1.2 { 10 } else { 6 };
     for index in 0..spark_count {
         let angle = index as f32 * std::f32::consts::TAU / spark_count as f32;
         let direction = Vec3::new(angle.cos(), 0.36 + (index % 3) as f32 * 0.16, angle.sin())
             .normalize_or_zero();
-        let start_scale = Vec3::new(0.65, 0.65, 1.0 + power * 0.45);
+        let start_scale = Vec3::new(0.65, 0.65, 1.0 + power * 0.55);
         commands.spawn((
             Name::new("Impact spark"),
             Mesh3d(assets.spark.clone()),
@@ -1977,13 +2311,13 @@ fn spawn_impact_fx(
             },
             CombatFx {
                 age: 0.0,
-                duration: 0.20 + (index % 4) as f32 * 0.025,
+                duration: 0.22 + (index % 4) as f32 * 0.03,
                 start_scale,
                 end_scale: Vec3::new(0.02, 0.02, 0.16),
                 peak_light: 0.0,
             },
             FxMotion {
-                velocity: direction * (10.0 + power * 6.0 + (index % 3) as f32 * 2.2),
+                velocity: direction * (12.0 + power * 7.5 + (index % 3) as f32 * 2.5),
                 drag: 2.8,
                 gravity: 18.0,
             },
@@ -1994,10 +2328,21 @@ fn spawn_impact_fx(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn recipes_are_bounded() {
-        assert!(weapon_recipe(WeaponKind::PlasmaMortar, 0).is_some());
-        assert!(weapon_recipe(WeaponKind::PulseRifle, 3).is_none());
+    fn wave_director_scales_enemy_pressure_and_boss_cadence() {
+        assert_eq!(wave_spawn_total(1), 6);
+        assert_eq!(wave_spawn_total(4), 13);
+        assert!(!wave_is_boss(3));
+        assert!(wave_is_boss(4));
+        assert!(wave_clear_reward(5) > wave_clear_reward(2));
+        assert_eq!(wave_enemy_cap(30), 28);
+    }
+
+    #[test]
+    fn weapon_point_costs_are_bounded() {
+        assert!(weapon_point_cost(WeaponKind::PlasmaMortar, 0).is_some());
+        assert!(weapon_point_cost(WeaponKind::PulseRifle, 3).is_none());
     }
 
     #[test]

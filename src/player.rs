@@ -199,9 +199,15 @@ pub fn update_warden_animation(
 }
 pub fn reset_player_for_run(
     world: Res<VoxelViewerWorld>,
+    mut lifecycle: ResMut<crate::gameplay::RunLifecycle>,
     mut player_state: ResMut<PlayerState>,
     mut player: Query<(&mut Transform, &mut Visibility), With<PlayerTag>>,
 ) {
+    if !lifecycle.player_reset_pending {
+        return;
+    }
+    lifecycle.player_reset_pending = false;
+
     let Ok((mut transform, mut visibility)) = player.single_mut() else {
         return;
     };
@@ -240,9 +246,11 @@ pub fn sync_player_visibility(
 pub fn update_player_movement(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     world: Res<VoxelViewerWorld>,
     loaded: Res<LoadedVoxelChunks>,
     camera: Res<VoxelViewerCamera>,
+    aim: Res<AimSolution>,
     mut session: ResMut<GameSession>,
     mut player_state: ResMut<PlayerState>,
     mut player_query: Query<&mut Transform, With<PlayerTag>>,
@@ -371,7 +379,19 @@ pub fn update_player_movement(
         player_state.grounded = true;
     }
 
-    if input_direction != Vec3::ZERO {
+    let is_weapon = matches!(session.loadout.selected_tool, ToolSlot::Weapon(_));
+    let aiming =
+        is_weapon && (mouse.pressed(MouseButton::Right) || mouse.pressed(MouseButton::Left));
+
+    if aiming && let Some(aim_pt) = aim.aim_point {
+        let diff = aim_pt - transform.translation;
+        let flat_diff = Vec3::new(diff.x, 0.0, diff.z);
+        if flat_diff.length_squared() > 0.01 {
+            let target_rotation = Quat::from_rotation_y((-flat_diff.x).atan2(-flat_diff.z));
+            let turn_blend = 1.0 - (-TURN_RESPONSE * 1.6 * dt).exp();
+            transform.rotation = transform.rotation.slerp(target_rotation, turn_blend);
+        }
+    } else if input_direction != Vec3::ZERO {
         let target_rotation = Quat::from_rotation_y((-input_direction.x).atan2(-input_direction.z));
         let turn_blend = 1.0 - (-TURN_RESPONSE * dt).exp();
         transform.rotation = transform.rotation.slerp(target_rotation, turn_blend);

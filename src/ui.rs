@@ -3,12 +3,15 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy::window::WindowFocused;
 
+use crate::combat::Enemy;
 use crate::gameplay::RunLifecycle;
 use crate::state::*;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayAction {
     Resume,
+    SaveGame,
+    LoadGame,
     Restart,
     ChooseRoute,
     MainMenu,
@@ -48,11 +51,36 @@ pub fn setup_hud(mut commands: Commands, font: Res<ArabicFont>) {
                 ..default()
             },
         )).with_children(|panel| {
-            panel.spawn(label(&font.0, "الصحة", 14.0, Color::srgb(0.86, 0.94, 0.94)));
+            panel.spawn((label(&font.0, "الصحة: 100 / 100", 14.0, Color::srgb(0.86, 0.94, 0.94)), PlayerHealthText));
             spawn_bar(panel, HealthFill, Color::srgb(0.92, 0.20, 0.22), 100.0);
-            panel.spawn(label(&font.0, "الدرع", 14.0, Color::srgb(0.74, 0.90, 1.0)));
+            panel.spawn((label(&font.0, "الدرع: 50 / 50", 14.0, Color::srgb(0.74, 0.90, 1.0)), PlayerShieldText));
             spawn_bar(panel, ShieldFill, Color::srgb(0.10, 0.66, 1.0), 100.0);
             panel.spawn((label(&font.0, "", 14.0, Color::srgb(0.76, 0.88, 0.90)), BaseHealthText));
+        });
+
+        // Targeted Enemy HP Panel (Top-Center)
+        root.spawn((
+            Name::new("Targeted Enemy HP Panel"),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(68.0),
+                left: Val::Percent(50.0),
+                margin: UiRect::left(Val::Px(-200.0)),
+                width: Val::Px(400.0),
+                padding: UiRect::all(Val::Px(9.0)),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.012, 0.032, 0.048, 0.88)),
+            Visibility::Hidden,
+            TargetEnemyPanelRoot,
+        )).with_children(|panel| {
+            panel.spawn((
+                label(&font.0, "", 16.0, Color::srgb(1.0, 0.35, 0.35)),
+                TextLayout::new_with_justify(Justify::Center),
+                TargetEnemyText,
+            ));
         });
 
         root.spawn((
@@ -143,14 +171,20 @@ fn spawn_bar(parent: &mut ChildSpawnerCommands, marker: impl Component, color: C
 pub fn update_hud(
     state: Res<State<AppState>>,
     session: Res<GameSession>,
-    mut hud: Query<&mut Visibility, With<HudRoot>>,
+    aim: Res<AimSolution>,
+    enemies: Query<&Enemy>,
+    mut hud: Query<&mut Visibility, (With<HudRoot>, Without<TargetEnemyPanelRoot>)>,
     mut health: Query<&mut Node, (With<HealthFill>, Without<ShieldFill>)>,
     mut shield: Query<&mut Node, (With<ShieldFill>, Without<HealthFill>)>,
-    mut objective: Query<&mut Text, (With<ObjectiveText>, Without<ResourceText>, Without<HotbarText>, Without<TimerText>, Without<BaseHealthText>)>,
-    mut resources: Query<&mut Text, (With<ResourceText>, Without<ObjectiveText>, Without<HotbarText>, Without<TimerText>, Without<BaseHealthText>)>,
-    mut hotbar: Query<&mut Text, (With<HotbarText>, Without<ObjectiveText>, Without<ResourceText>, Without<TimerText>, Without<BaseHealthText>)>,
-    mut timer: Query<&mut Text, (With<TimerText>, Without<ObjectiveText>, Without<ResourceText>, Without<HotbarText>, Without<BaseHealthText>)>,
-    mut base: Query<&mut Text, (With<BaseHealthText>, Without<ObjectiveText>, Without<ResourceText>, Without<HotbarText>, Without<TimerText>)>,
+    mut player_hp_text: Query<&mut Text, (With<PlayerHealthText>, Without<PlayerShieldText>, Without<TargetEnemyText>, Without<ObjectiveText>, Without<ResourceText>, Without<HotbarText>, Without<TimerText>, Without<BaseHealthText>)>,
+    mut player_sh_text: Query<&mut Text, (With<PlayerShieldText>, Without<PlayerHealthText>, Without<TargetEnemyText>, Without<ObjectiveText>, Without<ResourceText>, Without<HotbarText>, Without<TimerText>, Without<BaseHealthText>)>,
+    mut target_panel: Query<&mut Visibility, (With<TargetEnemyPanelRoot>, Without<HudRoot>)>,
+    mut target_text: Query<&mut Text, (With<TargetEnemyText>, Without<PlayerHealthText>, Without<PlayerShieldText>, Without<ObjectiveText>, Without<ResourceText>, Without<HotbarText>, Without<TimerText>, Without<BaseHealthText>)>,
+    mut objective: Query<&mut Text, (With<ObjectiveText>, Without<ResourceText>, Without<HotbarText>, Without<TimerText>, Without<BaseHealthText>, Without<PlayerHealthText>, Without<PlayerShieldText>, Without<TargetEnemyText>)>,
+    mut resources: Query<&mut Text, (With<ResourceText>, Without<ObjectiveText>, Without<HotbarText>, Without<TimerText>, Without<BaseHealthText>, Without<PlayerHealthText>, Without<PlayerShieldText>, Without<TargetEnemyText>)>,
+    mut hotbar: Query<&mut Text, (With<HotbarText>, Without<ObjectiveText>, Without<ResourceText>, Without<TimerText>, Without<BaseHealthText>, Without<PlayerHealthText>, Without<PlayerShieldText>, Without<TargetEnemyText>)>,
+    mut timer: Query<&mut Text, (With<TimerText>, Without<ObjectiveText>, Without<ResourceText>, Without<HotbarText>, Without<BaseHealthText>, Without<PlayerHealthText>, Without<PlayerShieldText>, Without<TargetEnemyText>)>,
+    mut base: Query<&mut Text, (With<BaseHealthText>, Without<ObjectiveText>, Without<ResourceText>, Without<HotbarText>, Without<TimerText>, Without<PlayerHealthText>, Without<PlayerShieldText>, Without<TargetEnemyText>)>,
 ) {
     if let Ok(mut visibility) = hud.single_mut() {
         *visibility = if matches!(state.get(), AppState::Playing | AppState::Paused | AppState::FinalDecision) {
@@ -159,6 +193,35 @@ pub fn update_hud(
     }
     if let Ok(mut node) = health.single_mut() { node.width = Val::Percent(session.loadout.health.clamp(0.0, 100.0)); }
     if let Ok(mut node) = shield.single_mut() { node.width = Val::Percent((session.loadout.shield * 2.0).clamp(0.0, 100.0)); }
+    if let Ok(mut text) = player_hp_text.single_mut() {
+        text.0 = format!("الصحة: {:.0} / 100", session.loadout.health.clamp(0.0, 100.0));
+    }
+    if let Ok(mut text) = player_sh_text.single_mut() {
+        text.0 = format!("الدرع: {:.0} / 50", session.loadout.shield.clamp(0.0, 50.0));
+    }
+    let mut show_target = false;
+    if let Some(target_entity) = aim.enemy {
+        if let Ok(enemy) = enemies.get(target_entity) {
+            show_target = true;
+            if let Ok(mut text) = target_text.single_mut() {
+                let name = enemy.kind.arabic_name();
+                if enemy.shield > 0.0 {
+                    text.0 = format!(
+                        "🎯 {}\nالدرع: {:.0} / {:.0}   |   الصحة: {:.0} / {:.0}",
+                        name, enemy.shield, enemy.max_shield, enemy.health, enemy.max_health
+                    );
+                } else {
+                    text.0 = format!(
+                        "🎯 {}\nالصحة: {:.0} / {:.0}",
+                        name, enemy.health, enemy.max_health
+                    );
+                }
+            }
+        }
+    }
+    if let Ok(mut vis) = target_panel.single_mut() {
+        *vis = if show_target { Visibility::Visible } else { Visibility::Hidden };
+    }
     if let Ok(mut text) = objective.single_mut() {
         text.0 = format!(
             "الهدف\n{}\nالموجة: {}   |   الأعداء: {}   |   الأبراج: {}/3",
@@ -192,12 +255,14 @@ pub fn update_hud(
             ToolSlot::Builder => "العجلة تغيّر نوع البلوك — النقر يضع البلوك".into(),
         };
         text.0 = format!(
-            "{}   {}   {}   {}   {}\n{}   |   الحرارة {:.0}%",
+            "{}   {}   {}   {}   {}   {}   {}\n{}   |   الحرارة {:.0}%",
             slot(1, ToolSlot::Weapon(WeaponKind::PulseRifle), "نبض"),
             slot(2, ToolSlot::Weapon(WeaponKind::PlasmaMortar), "بلازما"),
             slot(3, ToolSlot::Weapon(WeaponKind::IonLance), "أيون"),
-            slot(4, ToolSlot::MiningLaser, "حفر"),
-            slot(5, ToolSlot::Builder, "بناء"),
+            slot(4, ToolSlot::Weapon(WeaponKind::QuantumTesla), "تسلا"),
+            slot(5, ToolSlot::Weapon(WeaponKind::NukeMortar), "نووي"),
+            slot(6, ToolSlot::MiningLaser, "حفر"),
+            slot(7, ToolSlot::Builder, "بناء"),
             weapon,
             session.loadout.heat * 100.0
         );
@@ -245,6 +310,8 @@ pub fn setup_pause_overlay(mut commands: Commands, font: Res<ArabicFont>, prefs:
         root.spawn(panel(500.0)).with_children(|panel| {
             panel.spawn(label(&font.0, "توقف مؤقت", 38.0, Color::srgb(0.68, 1.0, 0.92)));
             spawn_action(panel, &font.0, "متابعة", OverlayAction::Resume, true);
+            spawn_action(panel, &font.0, "💾 حفظ اللعبة", OverlayAction::SaveGame, false);
+            spawn_action(panel, &font.0, "📂 تحميل اللعبة", OverlayAction::LoadGame, false);
             spawn_action(panel, &font.0, "إعادة الجولة", OverlayAction::Restart, false);
             spawn_action(panel, &font.0, "اختيار مسار آخر", OverlayAction::ChooseRoute, false);
             panel.spawn((label(&font.0, &settings_text(&prefs), 15.0, Color::srgb(0.72, 0.84, 0.86)), SettingsSummary));
@@ -310,6 +377,7 @@ pub fn handle_overlay_buttons(
     balance: Res<BalanceConfig>,
     mut prefs: ResMut<GamePreferences>,
     mut lifecycle: ResMut<RunLifecycle>,
+    mut save_state: ResMut<crate::save_load::SaveLoadState>,
     mut next_state: ResMut<NextState<AppState>>,
     mut choices: MessageWriter<FinalChoiceCommitted>,
     mut exit: MessageWriter<AppExit>,
@@ -321,6 +389,12 @@ pub fn handle_overlay_buttons(
                 color.0 = Color::srgb(0.18, 0.82, 0.68);
                 match action {
                     OverlayAction::Resume => next_state.set(AppState::Playing),
+                    OverlayAction::SaveGame => {
+                        save_state.save_requested = true;
+                    }
+                    OverlayAction::LoadGame => {
+                        save_state.load_requested = true;
+                    }
                     OverlayAction::Restart => {
                         lifecycle.active = false;
                         next_state.set(AppState::Playing);
@@ -441,5 +515,205 @@ fn block_name(block: BlockKind) -> &'static str {
         BlockKind::Ice => "جليد",
         BlockKind::VolcanicAsh => "رماد",
         _ => "بلوك",
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Perk Selection Modal UI
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Component)]
+pub struct PerkModalRoot;
+
+#[derive(Component)]
+pub struct PerkCardButton(pub usize);
+
+pub fn update_perk_modal(
+    mut commands: Commands,
+    mut session: ResMut<GameSession>,
+    font: Res<ArabicFont>,
+    modal_query: Query<Entity, With<PerkModalRoot>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut buttons: Query<(&Interaction, &PerkCardButton), (Changed<Interaction>, With<Button>)>,
+) {
+    let Some(choices) = session.pending_perk_choices else {
+        for entity in &modal_query {
+            commands.entity(entity).despawn();
+        }
+        return;
+    };
+
+    let mut chosen_index: Option<usize> = None;
+
+    if keys.just_pressed(KeyCode::Digit1) || keys.just_pressed(KeyCode::Numpad1) {
+        chosen_index = Some(0);
+    } else if keys.just_pressed(KeyCode::Digit2) || keys.just_pressed(KeyCode::Numpad2) {
+        chosen_index = Some(1);
+    } else if keys.just_pressed(KeyCode::Digit3) || keys.just_pressed(KeyCode::Numpad3) {
+        chosen_index = Some(2);
+    }
+
+    for (interaction, button) in &mut buttons {
+        if *interaction == Interaction::Pressed {
+            chosen_index = Some(button.0);
+            break;
+        }
+    }
+
+    if let Some(index) = chosen_index {
+        if let Some(perk) = choices.get(index) {
+            session.loadout.apply_perk(*perk);
+        }
+        session.pending_perk_choices = None;
+        for entity in &modal_query {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+
+    if !modal_query.is_empty() {
+        return;
+    }
+
+    let level = session.loadout.level;
+    commands
+        .spawn((
+            Name::new("Perk Selection Overlay"),
+            PerkModalRoot,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                position_type: PositionType::Absolute,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                row_gap: Val::Px(24.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.05, 0.12, 0.88)),
+            ZIndex(100),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text(format!("ارتفاع المستوى! اختر التطوير الخارق (المستوى {})", level)),
+                TextFont {
+                    font: font.0.clone(),
+                    font_size: 30.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.84, 0.28)),
+            ));
+
+            parent
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    column_gap: Val::Px(20.0),
+                    ..default()
+                })
+                .with_children(|card_parent| {
+                    for (i, perk) in choices.iter().enumerate() {
+                        card_parent
+                            .spawn((
+                                Button,
+                                PerkCardButton(i),
+                                Node {
+                                    width: Val::Px(270.0),
+                                    height: Val::Px(210.0),
+                                    flex_direction: FlexDirection::Column,
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::SpaceBetween,
+                                    padding: UiRect::all(Val::Px(16.0)),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.08, 0.18, 0.32, 0.95)),
+                                BorderColor::all(Color::srgb(0.28, 0.75, 1.0)),
+                            ))
+                            .with_children(|card| {
+                                card.spawn((
+                                    Text(format!("[{}] {}", i + 1, perk.title())),
+                                    TextFont {
+                                        font: font.0.clone(),
+                                        font_size: 19.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(1.0, 0.92, 0.42)),
+                                ));
+                                card.spawn((
+                                    Text(perk.description().to_string()),
+                                    TextFont {
+                                        font: font.0.clone(),
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.85, 0.92, 1.0)),
+                                ));
+                                card.spawn((
+                                    Text(format!("اضغط [{}] للاختيار", i + 1)),
+                                    TextFont {
+                                        font: font.0.clone(),
+                                        font_size: 13.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.35, 0.85, 0.45)),
+                                ));
+                            });
+                    }
+                });
+        });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Save / Load status notification UI
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Component)]
+pub struct SaveStatusText;
+
+pub fn setup_save_status_ui(mut commands: Commands, font: Res<ArabicFont>) {
+    commands.spawn((
+        Text("".to_string()),
+        TextFont {
+            font: font.0.clone(),
+            font_size: 16.0,
+            ..default()
+        },
+        TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+        TextLayout::new_with_justify(Justify::Center),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(8.0),
+            left: Val::Percent(50.0),
+            width: Val::Px(400.0),
+            margin: UiRect::left(Val::Px(-200.0)),
+            ..default()
+        },
+        Pickable::IGNORE,
+        ZIndex(60),
+        SaveStatusText,
+    ));
+}
+
+pub fn update_save_status_ui(
+    save_state: Res<crate::save_load::SaveLoadState>,
+    mut text_query: Query<(&mut Text, &mut TextColor), With<SaveStatusText>>,
+) {
+    let Ok((mut text, mut color)) = text_query.single_mut() else {
+        return;
+    };
+    if let Some((ref msg, ttl)) = save_state.status_message {
+        let alpha = (ttl * 1.4).clamp(0.0, 1.0);
+        text.0 = msg.clone();
+        let (r, g, b) = if msg.starts_with("✅") || msg.starts_with("💾") || msg.starts_with("📂") {
+            (0.2, 1.0, 0.5)
+        } else {
+            (1.0, 0.35, 0.35)
+        };
+        *color = TextColor(Color::srgba(r, g, b, alpha));
+    } else {
+        text.0 = String::new();
+        *color = TextColor(Color::NONE);
     }
 }

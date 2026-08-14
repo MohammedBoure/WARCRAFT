@@ -7,7 +7,6 @@ use bevy::{
     core_pipeline::tonemapping::Tonemapping,
     input::mouse::{MouseScrollUnit, MouseWheel},
     light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap},
-    pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel},
     post_process::bloom::Bloom,
     prelude::*,
     render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection, Hdr},
@@ -44,35 +43,31 @@ pub fn setup_viewer_scene(
         Tonemapping::AgX,
         ColorGrading::with_identical_sections(
             ColorGradingGlobal {
-                exposure: -0.62,
-                post_saturation: 1.06,
+                exposure: 0.0,
+                post_saturation: 1.15,
                 ..default()
             },
             ColorGradingSection {
-                saturation: 1.04,
+                saturation: 1.08,
                 ..default()
             },
         ),
-        ScreenSpaceAmbientOcclusion {
-            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
+        Bloom {
+            intensity: 0.15,
             ..default()
         },
-        Bloom {
-            intensity: 0.055,
-            ..Bloom::NATURAL
-        },
         DistanceFog {
-            color: Color::srgba(0.34, 0.43, 0.55, 1.0),
-            directional_light_color: Color::srgb(1.0, 0.94, 0.82),
-            directional_light_exponent: 12.0,
+            color: Color::srgba(0.18, 0.24, 0.32, 1.0),
+            directional_light_color: Color::srgb(1.0, 0.92, 0.75),
+            directional_light_exponent: 24.0,
             falloff: FogFalloff::Linear {
-                start: 180.0,
-                end: 650.0,
+                start: 380.0,
+                end: 950.0,
             },
         },
         AmbientLight {
-            color: Color::srgb(0.60, 0.68, 0.76),
-            brightness: 650.0,
+            color: Color::srgb(0.55, 0.65, 0.75),
+            brightness: 180.0,
             ..default()
         },
         camera_transform,
@@ -82,8 +77,8 @@ pub fn setup_viewer_scene(
     commands.spawn((
         Name::new("Critical Point Sun"),
         DirectionalLight {
-            color: Color::srgb(1.0, 0.78, 0.50),
-            illuminance: 14_000.0,
+            color: Color::srgb(1.0, 0.90, 0.72),
+            illuminance: 12_000.0,
             shadows_enabled: true,
             shadow_depth_bias: 0.018,
             shadow_normal_bias: 0.65,
@@ -128,7 +123,10 @@ pub fn control_viewer_camera(
     player_query: Query<&Transform, (With<PlayerTag>, Without<VoxelViewerCameraTag>)>,
 ) {
     let interactive = matches!(app_state.get(), AppState::Playing);
-    if matches!(app_state.get(), AppState::MainMenu | AppState::RouteChoice | AppState::Loading) {
+    if matches!(
+        app_state.get(),
+        AppState::MainMenu | AppState::RouteChoice | AppState::Loading
+    ) {
         camera_state.yaw += time.delta_secs() * 0.055;
     }
 
@@ -140,15 +138,6 @@ pub fn control_viewer_camera(
         mouse_motion.clear();
     }
 
-    if interactive {
-        if keyboard.pressed(KeyCode::KeyQ) {
-            camera_state.yaw += 1.35 * time.delta_secs();
-        }
-        if keyboard.pressed(KeyCode::KeyE) {
-            camera_state.yaw -= 1.35 * time.delta_secs();
-        }
-    }
-
     let mut scroll = 0.0;
     for event in mouse_wheel.read() {
         scroll += match event.unit {
@@ -156,12 +145,40 @@ pub fn control_viewer_camera(
             MouseScrollUnit::Pixel => event.y * 0.08,
         };
     }
-    if interactive
-        && session.loadout.selected_tool != ToolSlot::Builder
-        && scroll.abs() > f32::EPSILON
-    {
-        camera_state.height = (camera_state.height * (1.0 - scroll * 0.09))
-            .clamp(CAMERA_MIN_HEIGHT, CAMERA_MAX_HEIGHT);
+
+    if interactive {
+        if keyboard.pressed(KeyCode::KeyQ) {
+            camera_state.yaw += 1.35 * time.delta_secs();
+        }
+        if keyboard.pressed(KeyCode::KeyE) {
+            camera_state.yaw -= 1.35 * time.delta_secs();
+        }
+        if keyboard.pressed(KeyCode::KeyZ)
+            || keyboard.pressed(KeyCode::PageUp)
+            || keyboard.pressed(KeyCode::Equal)
+        {
+            camera_state.height = (camera_state.height - 180.0 * time.delta_secs())
+                .clamp(CAMERA_MIN_HEIGHT, CAMERA_MAX_HEIGHT);
+        }
+        if keyboard.pressed(KeyCode::KeyX)
+            || keyboard.pressed(KeyCode::PageDown)
+            || keyboard.pressed(KeyCode::Minus)
+        {
+            camera_state.height = (camera_state.height + 180.0 * time.delta_secs())
+                .clamp(CAMERA_MIN_HEIGHT, CAMERA_MAX_HEIGHT);
+        }
+
+        let is_builder = session.loadout.selected_tool == ToolSlot::Builder;
+        let modifier = keyboard.any_pressed([
+            KeyCode::ShiftLeft,
+            KeyCode::ShiftRight,
+            KeyCode::ControlLeft,
+            KeyCode::ControlRight,
+        ]);
+        if scroll.abs() > f32::EPSILON && (!is_builder || modifier) {
+            camera_state.height =
+                (camera_state.height - scroll * 18.0).clamp(CAMERA_MIN_HEIGHT, CAMERA_MAX_HEIGHT);
+        }
     }
 
     let target = if let Ok(player) = player_query.single() {
@@ -191,9 +208,18 @@ pub fn control_viewer_camera(
     if let Projection::Perspective(perspective) = &mut *projection {
         let sprinting =
             player_state.moving && keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-        let target_fov = if sprinting { 50.0 } else { 46.0_f32 }.to_radians();
+        let is_weapon = matches!(session.loadout.selected_tool, ToolSlot::Weapon(_));
+        let ads_active = interactive && is_weapon && mouse.pressed(MouseButton::Right);
+        let target_fov: f32 = if ads_active {
+            39.5
+        } else if sprinting {
+            50.0
+        } else {
+            46.0
+        };
+        let target_fov_rad = target_fov.to_radians();
         let fov_blend = 1.0 - (-5.5 * time.delta_secs()).exp();
-        perspective.fov += (target_fov - perspective.fov) * fov_blend;
+        perspective.fov += (target_fov_rad - perspective.fov) * fov_blend;
     }
 
     if camera_state.shake > 0.001 && !preferences.reduced_motion {
@@ -258,6 +284,7 @@ pub fn update_world_mood(
         sun.illuminance = sun_power;
     }
 }
+
 pub fn sync_visible_chunks(
     world: Res<VoxelViewerWorld>,
     camera: Res<VoxelViewerCamera>,

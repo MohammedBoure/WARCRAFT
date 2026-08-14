@@ -34,6 +34,17 @@ pub struct TargetBlockHighlightTag;
 #[derive(Component)]
 pub struct PlacementBlockHighlightTag;
 
+#[derive(Component)]
+pub struct HighlightFramePiece {
+    placement: bool,
+}
+
+#[derive(Resource)]
+pub struct PlacementHighlightMaterials {
+    valid: Handle<StandardMaterial>,
+    invalid: Handle<StandardMaterial>,
+}
+
 #[derive(Resource, Default)]
 pub struct VoxelWorldEdits {
     pub edits: Vec<VoxelTerrainEdit>,
@@ -68,6 +79,17 @@ pub fn setup_target_highlight(
         unlit: true,
         ..default()
     });
+    let invalid_build_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.10, 0.08, 0.78),
+        emissive: LinearRgba::rgb(2.1, 0.02, 0.01),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    commands.insert_resource(PlacementHighlightMaterials {
+        valid: build_material.clone(),
+        invalid: invalid_build_material,
+    });
     spawn_highlight_frame(
         &mut commands,
         &x_bar,
@@ -76,6 +98,7 @@ pub fn setup_target_highlight(
         mining_material,
         "Mining Target",
         TargetBlockHighlightTag,
+        false,
     );
     spawn_highlight_frame(
         &mut commands,
@@ -85,6 +108,7 @@ pub fn setup_target_highlight(
         build_material,
         "Build Preview",
         PlacementBlockHighlightTag,
+        true,
     );
 }
 
@@ -96,6 +120,7 @@ fn spawn_highlight_frame(
     material: Handle<StandardMaterial>,
     name: &'static str,
     marker: impl Component,
+    placement_piece: bool,
 ) {
     let half_x = BLOCK_SIZE * 0.52;
     let half_y = HEIGHT_SCALE * 0.54;
@@ -113,6 +138,9 @@ fn spawn_highlight_frame(
                         Mesh3d(x_bar.clone()),
                         MeshMaterial3d(material.clone()),
                         Transform::from_xyz(0.0, y, z),
+                        HighlightFramePiece {
+                            placement: placement_piece,
+                        },
                     ));
                 }
             }
@@ -122,6 +150,9 @@ fn spawn_highlight_frame(
                         Mesh3d(y_bar.clone()),
                         MeshMaterial3d(material.clone()),
                         Transform::from_xyz(x, 0.0, z),
+                        HighlightFramePiece {
+                            placement: placement_piece,
+                        },
                     ));
                 }
             }
@@ -131,6 +162,9 @@ fn spawn_highlight_frame(
                         Mesh3d(z_bar.clone()),
                         MeshMaterial3d(material.clone()),
                         Transform::from_xyz(x, y, 0.0),
+                        HighlightFramePiece {
+                            placement: placement_piece,
+                        },
                     ));
                 }
             }
@@ -149,8 +183,12 @@ pub fn handle_tool_selection(
     } else if keyboard.just_pressed(KeyCode::Digit3) {
         Some(ToolSlot::Weapon(WeaponKind::IonLance))
     } else if keyboard.just_pressed(KeyCode::Digit4) {
-        Some(ToolSlot::MiningLaser)
+        Some(ToolSlot::Weapon(WeaponKind::QuantumTesla))
     } else if keyboard.just_pressed(KeyCode::Digit5) {
+        Some(ToolSlot::Weapon(WeaponKind::NukeMortar))
+    } else if keyboard.just_pressed(KeyCode::Digit6) {
+        Some(ToolSlot::MiningLaser)
+    } else if keyboard.just_pressed(KeyCode::Digit7) {
         Some(ToolSlot::Builder)
     } else {
         None
@@ -190,9 +228,10 @@ fn cycle_build_block(loadout: &mut PlayerLoadout, direction: i32) {
 
 pub fn compute_aim_solution(
     primary_window: Query<&Window, With<PrimaryWindow>>,
-    camera_query: Query<(&Camera, &Transform), With<VoxelViewerCameraTag>>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<VoxelViewerCameraTag>>,
     ui_buttons: Query<&Interaction, With<Button>>,
     targets: Query<(Entity, &GlobalTransform, &CombatTarget)>,
+    player_query: Query<&Transform, (With<PlayerTag>, Without<VoxelViewerCameraTag>)>,
     loaded: Res<LoadedVoxelChunks>,
     mut aim: ResMut<AimSolution>,
 ) {
@@ -202,6 +241,7 @@ pub fn compute_aim_solution(
     aim.voxel = None;
     aim.enemy = None;
     aim.world_point = None;
+    aim.aim_point = None;
     if aim.pointer_over_ui {
         return;
     }
@@ -212,11 +252,10 @@ pub fn compute_aim_solution(
     else {
         return;
     };
-    let Some((camera, transform)) = camera_query.single().ok() else {
+    let Some((camera, camera_global_transform)) = camera_query.single().ok() else {
         return;
     };
-    let current_camera = GlobalTransform::from(*transform);
-    let Ok(ray) = camera.viewport_to_world(&current_camera, cursor) else {
+    let Ok(ray) = camera.viewport_to_world(camera_global_transform, cursor) else {
         return;
     };
     let origin = ray.origin;
@@ -225,25 +264,41 @@ pub fn compute_aim_solution(
     let voxel = voxel_raycast_loaded(&loaded, origin, direction, INTERACTION_DISTANCE);
     aim.voxel = voxel;
     aim.world_point = voxel.map(|hit| block_world_center(hit.block));
-    let mut closest_distance = aim
-        .world_point
-        .map(|point| point.distance(origin))
-        .unwrap_or(INTERACTION_DISTANCE);
+    let mut closest_enemy_distance = 120.0;
     for (entity, transform, target) in &targets {
         if !target.targetable {
             continue;
         }
-        let Some(distance) =
-            ray_sphere_distance(origin, direction, transform.translation(), target.radius)
-        else {
-            continue;
-        };
-        if distance <= closest_distance && distance <= INTERACTION_DISTANCE {
-            closest_distance = distance;
-            aim.enemy = Some(entity);
-            aim.world_point = Some(origin + direction * distance);
+        if let Some(distance) =
+            ray_sphere_distance(origin, direction, transform.translation(), target.radius + 1.8)
+        {
+            if distance <= closest_enemy_distance {
+                closest_enemy_distance = distance;
+                aim.enemy = Some(entity);
+                aim.world_point = Some(origin + direction * distance);
+            }
         }
     }
+
+    let player_y = player_query
+        .single()
+        .map(|p| p.translation.y)
+        .unwrap_or(30.0);
+    let plane_aim = if direction.y.abs() > 1e-4 {
+        let t = (player_y + 1.0 - origin.y) / direction.y;
+        if t > 0.0 {
+            Some(origin + direction * t)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    aim.aim_point = aim
+        .world_point
+        .or(plane_aim)
+        .or(Some(origin + direction * 60.0));
 }
 
 pub fn update_target_highlights(
@@ -259,6 +314,9 @@ pub fn update_target_highlights(
     >,
     loaded: Res<LoadedVoxelChunks>,
     mining: Res<MiningState>,
+    blockers: Query<(&GlobalTransform, &CombatTarget), Without<PlayerTag>>,
+    placement_materials: Res<PlacementHighlightMaterials>,
+    mut highlight_pieces: Query<(&HighlightFramePiece, &mut MeshMaterial3d<StandardMaterial>)>,
     mut delete_highlight: Query<
         (&mut Transform, &mut Visibility),
         (
@@ -296,12 +354,22 @@ pub fn update_target_highlights(
             *delete_visibility = Visibility::Visible;
         }
         ToolSlot::Builder => {
-            if let Some(position) = hit.placement
-                && valid_placement(position, &loaded, &player)
-            {
+            if let Some(position) = hit.placement {
+                let can_place = session.loadout.block_count(session.loadout.selected_block) > 0
+                    && valid_placement(position, &loaded, &player, &blockers);
                 placement_transform.translation = block_world_center(position);
                 placement_transform.scale = Vec3::ONE;
                 *placement_visibility = Visibility::Visible;
+                let material = if can_place {
+                    &placement_materials.valid
+                } else {
+                    &placement_materials.invalid
+                };
+                for (piece, mut piece_material) in &mut highlight_pieces {
+                    if piece.placement {
+                        piece_material.0 = material.clone();
+                    }
+                }
             }
         }
         ToolSlot::Weapon(_) => {}
@@ -313,6 +381,7 @@ pub fn handle_voxel_actions(
     mouse: Res<ButtonInput<MouseButton>>,
     aim: Res<AimSolution>,
     player: Query<&Transform, With<PlayerTag>>,
+    blockers: Query<(&GlobalTransform, &CombatTarget), Without<PlayerTag>>,
     mut session: ResMut<GameSession>,
     mut mining: ResMut<MiningState>,
     mut edits: ResMut<VoxelWorldEdits>,
@@ -332,10 +401,13 @@ pub fn handle_voxel_actions(
             let Some(position) = aim.voxel.and_then(|hit| hit.placement) else {
                 return;
             };
-            if !valid_placement(position, &loaded, &player) {
+            if !valid_placement(position, &loaded, &player, &blockers) {
                 return;
             }
             let block = session.loadout.selected_block;
+            if !session.loadout.consume_block(block) {
+                return;
+            }
             edits
                 .edits
                 .push(VoxelTerrainEdit::SetBlock { position, block });
@@ -399,17 +471,29 @@ fn valid_placement<F: bevy::ecs::query::QueryFilter>(
     position: VoxelBlockPosition,
     loaded: &LoadedVoxelChunks,
     player: &Query<&Transform, F>,
+    blockers: &Query<(&GlobalTransform, &CombatTarget), Without<PlayerTag>>,
 ) -> bool {
     if loaded.block_at(position).is_some_and(BlockKind::is_solid) {
         return false;
     }
     let center = block_world_center(position);
-    !player
+    if player
         .single()
         .is_ok_and(|transform| transform.translation.distance(center) < BLOCK_SIZE * 1.15)
+    {
+        return false;
+    }
+    !blockers.iter().any(|(transform, target)| {
+        transform.translation().distance(center) < target.radius + BLOCK_SIZE * 0.62
+    })
 }
 
-fn ray_sphere_distance(origin: Vec3, direction: Vec3, center: Vec3, radius: f32) -> Option<f32> {
+pub(crate) fn ray_sphere_distance(
+    origin: Vec3,
+    direction: Vec3,
+    center: Vec3,
+    radius: f32,
+) -> Option<f32> {
     let offset = origin - center;
     let b = offset.dot(direction);
     let c = offset.length_squared() - radius * radius;

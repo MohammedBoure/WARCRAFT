@@ -24,6 +24,7 @@ pub struct RouteSummary;
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
     Start,
+    LoadGame,
     Help,
     Quit,
 }
@@ -42,13 +43,29 @@ pub fn setup_loading_screen(
     mut timer: ResMut<LoadingTimer>,
 ) {
     timer.0.reset();
-    commands.spawn(screen_root(Color::srgb(0.018, 0.035, 0.052), 90)).with_children(|root| {
-        root.spawn(text(&font.0, "نقطة العبور", 54.0, Color::srgb(0.62, 1.0, 0.92)));
-        root.spawn((
-            text(&font.0, "تهيئة منظومة الدفاع الكوكبي...", 18.0, Color::srgb(0.70, 0.82, 0.86)),
-            Node { position_type: PositionType::Absolute, bottom: Val::Percent(34.0), ..default() },
-        ));
-    });
+    commands
+        .spawn(screen_root(Color::srgb(0.018, 0.035, 0.052), 90))
+        .with_children(|root| {
+            root.spawn(text(
+                &font.0,
+                "نقطة العبور",
+                54.0,
+                Color::srgb(0.62, 1.0, 0.92),
+            ));
+            root.spawn((
+                text(
+                    &font.0,
+                    "تهيئة منظومة الدفاع الكوكبي...",
+                    18.0,
+                    Color::srgb(0.70, 0.82, 0.86),
+                ),
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Percent(34.0),
+                    ..default()
+                },
+            ));
+        });
 }
 
 pub fn finish_loading(
@@ -67,11 +84,12 @@ pub fn setup_main_menu(mut commands: Commands, font: Res<ArabicFont>) {
             panel.spawn(text(&font.0, "نقطة العبور", 50.0, Color::srgb(0.66, 1.0, 0.92)));
             panel.spawn(text(
                 &font.0,
-                "إشارة مجهولة تفصل بين وطن آمن وكوكب تحت الغزو",
+                "قرار واحد يفصل بين البقاء في الوطن والسفر إلى كوكب الحرب",
                 19.0,
                 Color::srgb(0.78, 0.88, 0.90),
             ));
-            spawn_button(panel, &font.0, "ابدأ المهمة", MenuAction::Start, true);
+            spawn_button(panel, &font.0, "ابدأ مهمة جديدة", MenuAction::Start, true);
+            spawn_button(panel, &font.0, "📂 تحميل اللعبة المحفوظة", MenuAction::LoadGame, false);
             spawn_button(panel, &font.0, "طريقة اللعب", MenuAction::Help, false);
             spawn_button(panel, &font.0, "خروج", MenuAction::Quit, false);
             panel.spawn(text(
@@ -118,14 +136,14 @@ pub fn setup_route_choice(
             spawn_route_button(
                 panel,
                 &font.0,
-                "العودة إلى الكوكب الأصلي\nدفاع سهل لمدة 10 دقائق — بناء واستكشاف وغارات محدودة",
+                "البقاء في الكوكب الأصلي\nحرية بناء واستكشاف مع دوريات فضائية ضعيفة وغارات محدودة",
                 RouteAction::SelectHome,
                 Color::srgba(0.07, 0.34, 0.30, 0.98),
             );
             spawn_route_button(
                 panel,
                 &font.0,
-                "دخول الكوكب المعادي\nحملة 12–18 دقيقة — أبراج غزو، أعداء جويون وزعيم",
+                "السفر إلى كوكب الحرب\nحملة قتالية 12–18 دقيقة — أبراج غزو، أعداء أرضيون وجويون وزعيم",
                 RouteAction::SelectAlien,
                 Color::srgba(0.38, 0.10, 0.18, 0.98),
             );
@@ -140,9 +158,13 @@ pub fn setup_route_choice(
 }
 
 pub fn handle_menu_buttons(
-    mut buttons: Query<(&Interaction, &MenuAction, &mut BackgroundColor), (Changed<Interaction>, With<Button>)>,
+    mut buttons: Query<
+        (&Interaction, &MenuAction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>),
+    >,
     mut help_panel: Query<&mut Visibility, With<HelpPanel>>,
     mut next_state: ResMut<NextState<AppState>>,
+    mut save_state: ResMut<crate::save_load::SaveLoadState>,
     mut exit: MessageWriter<AppExit>,
 ) {
     for (interaction, action, mut background) in &mut buttons {
@@ -150,27 +172,41 @@ pub fn handle_menu_buttons(
             Interaction::Pressed => {
                 background.0 = Color::srgb(0.16, 0.84, 0.68);
                 match action {
-                    MenuAction::Start => next_state.set(AppState::Playing),
+                    MenuAction::Start => next_state.set(AppState::RouteChoice),
+                    MenuAction::LoadGame => {
+                        save_state.load_requested = true;
+                    }
                     MenuAction::Help => {
                         if let Ok(mut visibility) = help_panel.single_mut() {
-                            *visibility = if *visibility == Visibility::Hidden { Visibility::Visible } else { Visibility::Hidden };
+                            *visibility = if *visibility == Visibility::Hidden {
+                                Visibility::Visible
+                            } else {
+                                Visibility::Hidden
+                            };
                         }
                     }
-                    MenuAction::Quit => { exit.write(AppExit::Success); }
+                    MenuAction::Quit => {
+                        exit.write(AppExit::Success);
+                    }
                 }
             }
             Interaction::Hovered => background.0 = Color::srgba(0.12, 0.48, 0.44, 0.98),
-            Interaction::None => background.0 = if *action == MenuAction::Start {
-                Color::srgba(0.08, 0.64, 0.54, 0.96)
-            } else {
-                Color::srgba(0.08, 0.20, 0.25, 0.94)
-            },
+            Interaction::None => {
+                background.0 = if *action == MenuAction::Start {
+                    Color::srgba(0.08, 0.64, 0.54, 0.96)
+                } else {
+                    Color::srgba(0.08, 0.20, 0.25, 0.94)
+                }
+            }
         }
     }
 }
 
 pub fn handle_route_buttons(
-    mut buttons: Query<(&Interaction, &RouteAction, &mut BackgroundColor), (Changed<Interaction>, With<Button>)>,
+    mut buttons: Query<
+        (&Interaction, &RouteAction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>),
+    >,
     mut pending: ResMut<PendingRoute>,
     mut summaries: Query<&mut Text, With<RouteSummary>>,
     mut session: ResMut<GameSession>,
@@ -197,10 +233,15 @@ pub fn handle_route_buttons(
                 }
                 if let Ok(mut summary) = summaries.single_mut() {
                     summary.0 = match pending.0 {
-                        Some(PlanetRoute::HomeDefense) => "القرار المحدد: حماية الكوكب الأصلي",
-                        Some(PlanetRoute::InvadedPlanet) => "القرار المحدد: الهبوط في قلب الغزو",
+                        Some(PlanetRoute::HomeDefense) => {
+                            "القرار المحدد: البقاء في الكوكب الأصلي — خطر منخفض"
+                        }
+                        Some(PlanetRoute::InvadedPlanet) => {
+                            "القرار المحدد: السفر إلى كوكب الحرب — خطر مرتفع"
+                        }
                         _ => "اختر أحد المسارين لعرض التأكيد",
-                    }.into();
+                    }
+                    .into();
                 }
             }
             Interaction::Hovered => background.0 = Color::srgba(0.15, 0.42, 0.40, 0.98),
@@ -249,34 +290,55 @@ fn panel(width: f32) -> (Node, BackgroundColor, BorderColor) {
     )
 }
 
-fn text(font: &Handle<Font>, label: &str, size: f32, color: Color) -> (Text, TextFont, TextColor, TextLayout) {
+fn text(
+    font: &Handle<Font>,
+    label: &str,
+    size: f32,
+    color: Color,
+) -> (Text, TextFont, TextColor, TextLayout) {
     (
         Text::new(label),
-        TextFont { font: font.clone(), font_size: size, ..default() },
+        TextFont {
+            font: font.clone(),
+            font_size: size,
+            ..default()
+        },
         TextColor(color),
         TextLayout::new_with_justify(Justify::Center),
     )
 }
 
-fn spawn_button(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, label: &'static str, action: MenuAction, primary: bool) {
-    let color = if primary { Color::srgba(0.08, 0.64, 0.54, 0.96) } else { Color::srgba(0.08, 0.20, 0.25, 0.94) };
-    parent.spawn((
-        Button,
-        Node {
-            width: Val::Percent(86.0),
-            height: Val::Px(52.0),
-            border: UiRect::all(Val::Px(1.0)),
-            border_radius: BorderRadius::all(Val::Px(12.0)),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            ..default()
-        },
-        BackgroundColor(color),
-        BorderColor::all(Color::srgba(0.48, 0.96, 0.86, 0.52)),
-        action,
-    )).with_children(|button| {
-        button.spawn(text(font, label, 20.0, Color::WHITE));
-    });
+fn spawn_button(
+    parent: &mut ChildSpawnerCommands,
+    font: &Handle<Font>,
+    label: &'static str,
+    action: MenuAction,
+    primary: bool,
+) {
+    let color = if primary {
+        Color::srgba(0.08, 0.64, 0.54, 0.96)
+    } else {
+        Color::srgba(0.08, 0.20, 0.25, 0.94)
+    };
+    parent
+        .spawn((
+            Button,
+            Node {
+                width: Val::Percent(86.0),
+                height: Val::Px(52.0),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(12.0)),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(color),
+            BorderColor::all(Color::srgba(0.48, 0.96, 0.86, 0.52)),
+            action,
+        ))
+        .with_children(|button| {
+            button.spawn(text(font, label, 20.0, Color::WHITE));
+        });
 }
 
 fn spawn_route_button(
@@ -286,22 +348,24 @@ fn spawn_route_button(
     action: RouteAction,
     color: Color,
 ) {
-    parent.spawn((
-        Button,
-        Node {
-            width: Val::Percent(94.0),
-            min_height: Val::Px(72.0),
-            padding: UiRect::all(Val::Px(12.0)),
-            border: UiRect::all(Val::Px(1.0)),
-            border_radius: BorderRadius::all(Val::Px(12.0)),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            ..default()
-        },
-        BackgroundColor(color),
-        BorderColor::all(Color::srgba(0.48, 0.96, 0.86, 0.50)),
-        action,
-    )).with_children(|button| {
-        button.spawn(text(font, label, 18.0, Color::WHITE));
-    });
+    parent
+        .spawn((
+            Button,
+            Node {
+                width: Val::Percent(94.0),
+                min_height: Val::Px(72.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(12.0)),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(color),
+            BorderColor::all(Color::srgba(0.48, 0.96, 0.86, 0.50)),
+            action,
+        ))
+        .with_children(|button| {
+            button.spawn(text(font, label, 18.0, Color::WHITE));
+        });
 }

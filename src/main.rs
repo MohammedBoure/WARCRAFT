@@ -8,6 +8,7 @@ mod interaction;
 mod menu;
 mod player;
 mod qa;
+mod save_load;
 mod state;
 mod ui;
 mod world;
@@ -24,6 +25,7 @@ use crate::interaction::*;
 use crate::menu::*;
 use crate::player::*;
 use crate::qa::*;
+use crate::save_load::*;
 use crate::state::*;
 use crate::ui::*;
 use crate::world::*;
@@ -41,6 +43,9 @@ enum GameUpdateSet {
 }
 
 fn main() {
+    #[cfg(target_arch = "wasm32")]
+    let options = ViewerOptions::default();
+    #[cfg(not(target_arch = "wasm32"))]
     let options = ViewerOptions::parse(env::args().skip(1)).unwrap_or_else(|error| {
         eprintln!("نقطة العبور: {error}");
         std::process::exit(2);
@@ -98,6 +103,7 @@ fn main() {
         .init_resource::<LoadingTimer>()
         .init_resource::<PendingRoute>()
         .init_resource::<QaScreenshot>()
+        .init_resource::<SaveLoadState>()
         .add_message::<DamageEvent>()
         .add_message::<ResourceCollected>()
         .add_message::<BlockCollected>()
@@ -107,6 +113,8 @@ fn main() {
         .add_message::<FinalChoiceCommitted>()
         .add_message::<RelayDestroyed>()
         .add_message::<RunFinished>()
+        .add_message::<WaveStarted>()
+        .add_message::<PlayerRespawned>()
         .add_message::<GameSound>()
         .add_systems(
             PostStartup,
@@ -118,6 +126,8 @@ fn main() {
                 setup_combat_assets,
                 setup_audio,
                 setup_hud,
+                setup_save_status_ui,
+                check_save_on_startup,
             ),
         )
         .add_systems(OnEnter(AppState::Loading), menu::setup_loading_screen)
@@ -215,6 +225,8 @@ fn main() {
             Update,
             (
                 animate_landmarks,
+                update_enemy_visuals,
+                apply_outline_materials,
                 setup_warden_animation,
                 update_warden_animation,
                 animate_player,
@@ -232,11 +244,16 @@ fn main() {
         .add_systems(
             Update,
             (
+                handle_save_load_input,
+                process_save_load,
                 toggle_pause,
                 pause_when_unfocused,
                 handle_overlay_buttons,
                 play_ui_clicks,
+                update_combat_audio,
                 play_game_sounds,
+                update_perk_modal,
+                update_save_status_ui,
             )
                 .chain()
                 .in_set(GameUpdateSet::Ui),
@@ -251,12 +268,22 @@ fn main() {
 }
 
 fn asset_root() -> String {
-    let beside_executable = env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|parent| parent.join("assets")));
-    beside_executable
-        .filter(|candidate| candidate.is_dir())
-        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"))
-        .to_string_lossy()
-        .into_owned()
+    #[cfg(target_arch = "wasm32")]
+    {
+        "assets".to_string()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if std::path::Path::new("assets").is_dir() {
+            return "assets".to_string();
+        }
+        let beside_executable = env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|parent| parent.join("assets")));
+        beside_executable
+            .filter(|candidate| candidate.is_dir())
+            .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"))
+            .to_string_lossy()
+            .into_owned()
+    }
 }

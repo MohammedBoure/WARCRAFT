@@ -2114,6 +2114,8 @@ version = "0.1.0"
 dependencies = [
  "astra_voxel_world",
  "bevy",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

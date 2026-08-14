@@ -32,6 +32,9 @@ pub struct AudioDirector {
 #[derive(Component)]
 pub struct AmbientLayer;
 
+#[derive(Component)]
+pub struct OneShotAudio;
+
 pub fn setup_audio(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -70,9 +73,20 @@ pub fn play_ui_clicks(
     mut commands: Commands,
 ) {
     *cooldown = (*cooldown - time.delta_secs()).max(0.0);
-    let Some(audio) = audio else { return; };
-    if *cooldown == 0.0 && buttons.iter().any(|interaction| *interaction == Interaction::Pressed) {
-        play_one_shot(&mut commands, audio.click.clone(), preferences.master_volume * 0.48, 1.0);
+    let Some(audio) = audio else {
+        return;
+    };
+    if *cooldown == 0.0
+        && buttons
+            .iter()
+            .any(|interaction| *interaction == Interaction::Pressed)
+    {
+        play_one_shot(
+            &mut commands,
+            audio.click.clone(),
+            preferences.master_volume * 0.48,
+            1.0,
+        );
         *cooldown = 0.075;
     }
 }
@@ -82,14 +96,21 @@ pub fn play_game_sounds(
     audio: Option<Res<GameAudio>>,
     preferences: Res<GamePreferences>,
     mut director: ResMut<AudioDirector>,
+    one_shots: Query<Entity, With<OneShotAudio>>,
     mut events: MessageReader<GameSound>,
     mut commands: Commands,
 ) {
-    let Some(audio) = audio else { return; };
+    let Some(audio) = audio else {
+        return;
+    };
     for cooldown in director.cooldowns.values_mut() {
         *cooldown = (*cooldown - time.delta_secs()).max(0.0);
     }
+    let mut active_one_shots = one_shots.iter().count();
     for sound in events.read() {
+        if active_one_shots >= 20 {
+            continue;
+        }
         let minimum = sound_cooldown(*sound);
         if director.cooldowns.get(sound).copied().unwrap_or(0.0) > 0.0 {
             continue;
@@ -112,7 +133,13 @@ pub fn play_game_sounds(
         };
         let speed = 0.96 + (director.variation % 5) as f32 * 0.018;
         director.variation = director.variation.wrapping_add(1);
-        play_one_shot(&mut commands, source, preferences.master_volume * volume, speed);
+        play_one_shot(
+            &mut commands,
+            source,
+            preferences.master_volume * volume,
+            speed,
+        );
+        active_one_shots += 1;
     }
 }
 
@@ -126,15 +153,29 @@ pub fn update_combat_audio(
 ) {
     let active = matches!(state.get(), AppState::Playing);
     let pressure = (session.active_enemies as f32 / 16.0).clamp(0.0, 1.0);
-    let route_mix = if session.route == PlanetRoute::InvadedPlanet { 1.0 } else { 0.78 };
+    let route_mix = if session.route == PlanetRoute::InvadedPlanet {
+        1.0
+    } else {
+        0.78
+    };
     for mut settings in &mut ambient {
         settings.volume = Volume::Linear(
-            preferences.master_volume * route_mix * if active { 0.11 + pressure * 0.035 } else { 0.07 },
+            preferences.master_volume
+                * route_mix
+                * if active {
+                    0.11 + pressure * 0.035
+                } else {
+                    0.07
+                },
         );
         settings.speed = 0.98 + pressure * 0.035;
     }
     for event in finished.read() {
-        sounds.write(if event.0 == RunOutcome::MissionFailed { GameSound::Failure } else { GameSound::Success });
+        sounds.write(if event.0 == RunOutcome::MissionFailed {
+            GameSound::Failure
+        } else {
+            GameSound::Success
+        });
     }
 }
 
@@ -150,16 +191,12 @@ fn sound_cooldown(sound: GameSound) -> f32 {
     }
 }
 
-fn play_one_shot(
-    commands: &mut Commands,
-    source: Handle<AudioSource>,
-    volume: f32,
-    speed: f32,
-) {
+fn play_one_shot(commands: &mut Commands, source: Handle<AudioSource>, volume: f32, speed: f32) {
     commands.spawn((
         AudioPlayer::new(source),
         PlaybackSettings::DESPAWN
             .with_volume(Volume::Linear(volume.clamp(0.0, 1.0)))
             .with_speed(speed.clamp(0.85, 1.15)),
+        OneShotAudio,
     ));
 }

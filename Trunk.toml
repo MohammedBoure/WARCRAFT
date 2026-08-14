@@ -1,0 +1,7 @@
+[build]
+target = "index.html"
+dist = "dist"
+minify = "never"
+
+[watch]
+ignore = ["dist"]

@@ -148,14 +148,16 @@ pub fn prepare_new_run(
     edits.placed_durability.clear();
     reload_loaded_chunks(&mut commands, &mut loaded);
     lifecycle.active = true;
-    lifecycle.player_reset_pending = true;
     *director = EnemyDirector::default();
 
     let surface = sample_voxel_column(world.settings, 0, 0).height as f32 * HEIGHT_SCALE;
     let spawn = Vec3::new(BLOCK_SIZE * 0.5, surface + 2.1, BLOCK_SIZE * 0.5);
-    session.begin_route(route, spawn);
 
-    spawn_ship(&mut commands, &assets, surface);
+    if session.phase == MissionPhase::AwaitingRoute {
+        session.begin_route(route, spawn);
+        lifecycle.player_reset_pending = true;
+    }
+
     for (block, x, z) in RESOURCE_COORDS {
         let y = sample_voxel_column(world.settings, x, z).height + 1;
         edits.edits.push(VoxelTerrainEdit::SetBlock {
@@ -165,7 +167,7 @@ pub fn prepare_new_run(
     }
 
     match route {
-        PlanetRoute::HomeDefense => spawn_home_core(&mut commands, &assets, surface),
+        PlanetRoute::HomeDefense => {}
         PlanetRoute::InvadedPlanet => {
             for (index, (x, z)) in RELAY_COORDS.into_iter().enumerate() {
                 spawn_relay(&mut commands, &assets, world.settings, index as u8 + 1, x, z);
@@ -193,17 +195,17 @@ fn apply_planet_profile(world: &mut VoxelViewerWorld, route: PlanetRoute) {
 fn spawn_ship(commands: &mut Commands, assets: &GameplayVisualAssets, surface: f32) {
     commands.spawn((
         Name::new("Player Landing Ship"),
+        Visibility::default(),
         Mesh3d(assets.ship_mesh.clone()),
         MeshMaterial3d(assets.ship_material.clone()),
-        Transform::from_xyz(-10.0, surface + 5.0, 2.0)
-            .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+        Transform::from_xyz(-10.0, surface + 1.2, 2.0),
         MissionTarget { kind: MissionTargetKind::Ship, health: 650.0, max_health: 650.0 },
         CombatTarget { radius: 5.0, aerial: false, targetable: false },
         RunEntity,
     )).with_children(|parent| {
         parent.spawn((
             SceneRoot(assets.ship_scene.clone()),
-            Transform::from_xyz(0.0, -2.5, 0.0).with_scale(Vec3::splat(4.2)),
+            Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::splat(4.2)),
         ));
     });
 }
