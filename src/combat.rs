@@ -452,7 +452,6 @@ pub fn handle_weapon_fire(
     mut rigs: Query<&mut WeaponRig>,
     mut runtime: ResMut<CombatRuntime>,
     mut session: ResMut<GameSession>,
-    mut damage: MessageWriter<DamageEvent>,
     mut sounds: MessageWriter<GameSound>,
     mut commands: Commands,
 ) {
@@ -1301,12 +1300,19 @@ pub fn update_projectiles(
                 });
                 invalidate_edit(&mut commands, &mut loaded, block_pos, 2);
             }
+            let impact_power = match shot.kind {
+                DamageKind::Nuke => 5.4,
+                DamageKind::Plasma => 2.8,
+                DamageKind::Ion => 1.6,
+                DamageKind::Tesla => 1.4,
+                _ => if shot.area > 0.0 { 2.2 } else { 0.95 },
+            };
             spawn_impact_fx(
                 &mut commands,
                 &assets,
                 transform.translation,
                 trail.style,
-                if shot.area > 0.0 { 1.8 } else { 0.55 },
+                impact_power,
             );
             if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
             continue;
@@ -1409,12 +1415,19 @@ pub fn update_projectiles(
                 invalidate_edit(&mut commands, &mut loaded, block_pos, crater_radius as i32);
             }
 
+            let impact_power = match shot.kind {
+                DamageKind::Nuke => 5.4,
+                DamageKind::Plasma => 2.8,
+                DamageKind::Ion => 1.6,
+                DamageKind::Tesla => 1.4,
+                _ => if shot.area > 0.0 { 2.2 } else { 0.95 },
+            };
             spawn_impact_fx(
                 &mut commands,
                 &assets,
                 impact_position,
                 trail.style,
-                if shot.area > 0.0 { 2.1 } else { 0.85 },
+                impact_power,
             );
             if let Ok(mut cmd) = commands.get_entity(entity) { cmd.despawn(); }
             continue;
